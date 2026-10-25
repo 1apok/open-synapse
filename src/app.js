@@ -15,6 +15,9 @@ const THEMES = {
   win95: ["#008080", "#c0c0c0", "#000080", "#ffffff"],
 };
 const PALETTE = ["#2ff0b0", "#22a6ff", "#7b6cff", "#ff3bd4", "#ff3355", "#ff8a3b", "#ffd23b", "#ffffff"];
+// mouse functions a button can take, as the device encodes them
+const MOUSE_FUNCS = [1, 2, 3, 4, 5, 9, 10];
+const REMAPPABLE = [3, 4, 5];
 const STAGE_COLORS = ["#ff4d4d", "#3ee07a", "#4d8bff", "#2fd8e6", "#ffd23b"];
 const FX_COLOR = { static: 1, breathing: 2, reactive: 1, starlight: 1 };
 const FX_SPEED = new Set(["wave", "reactive", "starlight"]);
@@ -22,7 +25,7 @@ const FX_SPEED = new Set(["wave", "reactive", "starlight"]);
 const EXT_FX = ["static", "breathing", "spectrum", "wave", "reactive", "starlight", "off"];
 const DEMO = [
   { key: "demo:viper", name: "Viper V3 Pro", kind: "mouse", wireless: true, receiver: true, firmware: "v1.04",
-    caps: { dpi: true, stages: true, max_dpi: 35000, polling: [125, 500, 1000, 2000, 4000, 8000], battery: true, idle: true, liftoff: true, dongle_led: true, dynamic_sensitivity: true, lighting: false, brightness: false, effects: [], zones: [] } },
+    caps: { dpi: true, stages: true, max_dpi: 35000, polling: [125, 500, 1000, 2000, 4000, 8000], battery: true, idle: true, liftoff: true, dongle_led: true, dynamic_sensitivity: true, remap: true, lighting: false, brightness: false, effects: [], zones: [] } },
   { key: "demo:basilisk", name: "Basilisk V3", kind: "mouse", firmware: "v1.10",
     caps: { dpi: true, stages: true, max_dpi: 26000, polling: [125, 500, 1000], battery: false, idle: false, lighting: true, brightness: true, effects: EXT_FX, zones: [{ id: 4, name: "logo" }, { id: 1, name: "scroll" }] } },
   { key: "demo:bw", name: "BlackWidow V4", kind: "keyboard", firmware: "v2.01",
@@ -166,7 +169,13 @@ function normalize(s = {}) {
     dpi: { stages, active: num(s.dpi?.active, 0, 0, stages.length - 1), split: !!s.dpi?.split },
     polling: num(s.polling, 1000, 125, 8000),
     lighting: { brightness: num(s.lighting?.brightness, 80, 0, 100), sync: s.lighting?.sync !== false, zones },
-    calib: { liftoff: num(s.calib?.liftoff, 1, 0, 2), dynamic: !!s.calib?.dynamic },
+    calib: {
+      liftoff: num(s.calib?.liftoff, 1, 0, 2),
+      dynamic: !!s.calib?.dynamic,
+      curve: num(s.calib?.curve, 0, 0, 3),
+      customMax: Number.isFinite(+s.calib?.customMax) ? clamp(+s.calib.customMax, 1, 2.5) : 1.5,
+    },
+    buttons: Object.fromEntries(REMAPPABLE.map((b) => [b, MOUSE_FUNCS.includes(+s.buttons?.[b]) ? +s.buttons[b] : b])),
     dongle: { led: num(s.dongle?.led, 2, 1, 3) },
     power: { idle: num(s.power?.idle, 300, 60, 900), lowBattery: num(s.power?.lowBattery, 15, 5, 100) },
   };
@@ -187,6 +196,8 @@ function settingsFromHw(dev) {
   if (hw.liftoff != null) s.calib.liftoff = clamp(hw.liftoff, 0, 2);
   if (hw.dynamic_sensitivity != null) s.calib.dynamic = hw.dynamic_sensitivity;
   if (hw.dongle_led != null) s.dongle.led = hw.dongle_led;
+  if (hw.curve != null) s.calib.curve = hw.curve;
+  for (const [b, f] of hw.buttons || []) if (REMAPPABLE.includes(b) && MOUSE_FUNCS.includes(f)) s.buttons[b] = f;
   if (hw.low_battery) s.power.lowBattery = clamp(hw.low_battery, 5, 100);
   return s;
 }
@@ -301,11 +312,20 @@ function applyPower(dev, s) {
 
 function applyCalib(dev, s) {
   if (dev.caps.liftoff) debounce("calib" + dev.key, () => hw(dev, "set_liftoff", { level: s.calib.liftoff }), 200);
-  if (dev.caps.dynamic_sensitivity) debounce("dyn" + dev.key, () => hw(dev, "set_dynamic_sensitivity", { on: s.calib.dynamic }), 200);
+  if (dev.caps.dynamic_sensitivity)
+    debounce("dyn" + dev.key, () => hw(dev, "set_dynamic_sensitivity", { on: s.calib.dynamic, curve: s.calib.curve, customMax: s.calib.customMax }), 300);
   if (dev.caps.dongle_led) debounce("led" + dev.key, () => hw(dev, "set_dongle_led", { mode: s.dongle.led }), 200);
 }
 
+function applyButtons(dev, s) {
+  if (!dev.caps.remap) return;
+  debounce("buttons" + dev.key, async () => {
+    for (const b of REMAPPABLE) await hw(dev, "set_button", { button: b, function: s.buttons[b] });
+  }, 200);
+}
+
 function applyAll(dev, p) {
+  applyButtons(dev, p.settings);
   applyCalib(dev, p.settings);
   applyDpi(dev, p.settings);
   applyPolling(dev, p.settings);
@@ -469,6 +489,7 @@ function deviceView(dev) {
     ["performance", dev.caps.dpi || dev.caps.polling.length],
     ["lighting", dev.caps.lighting],
     ["power", dev.caps.idle || dev.caps.battery],
+    ["buttons", dev.caps.remap],
     ["calibration", dev.caps.liftoff],
   ].filter(([, ok]) => ok).map(([id]) => id);
   if (!tabs.includes(state.tab)) state.tab = tabs[0] || "performance";
@@ -492,6 +513,7 @@ function deviceView(dev) {
   else if (state.tab === "performance") body = performanceTab(dev, p.settings);
   else if (state.tab === "lighting") body = lightingTab(dev, p.settings);
   else if (state.tab === "calibration") body = calibTab(dev, p.settings);
+  else if (state.tab === "buttons") body = buttonsTab(dev, p.settings);
   else body = powerTab(dev, p.settings);
 
   const [first, ...rest] = dev.name.split(" ");
@@ -627,6 +649,21 @@ function powerTab(dev, s) {
   </div>`;
 }
 
+function buttonsTab(dev, s) {
+  const names = { 3: "btnMiddle", 4: "btnBack", 5: "btnForward" };
+  return `<div class="grid">
+    <div class="card span-8">${head(1, t("remap"), esc(t("remapLayer")))}<div class="card-body">
+      ${REMAPPABLE.map((b) => `<div class="setting" style="padding-left:0;padding-right:0">
+        <div><div class="t">${esc(t(names[b]))}</div>${s.buttons[b] === b ? `<div class="d">${esc(t("btnDefault"))}</div>` : ""}</div>
+        <select class="select" data-act="button" data-b="${b}">${MOUSE_FUNCS.map((f) => `<option value="${f}" ${s.buttons[b] === f ? "selected" : ""}>${esc(t("fn" + f))}</option>`).join("")}</select>
+      </div>`).join("")}
+    </div></div>
+    <div class="card span-4">${head(2, t("remapNote"))}<div class="card-body">
+      <p class="hint" style="margin:0">${esc(t("remapNoteText"))}</p>
+    </div></div>
+  </div>`;
+}
+
 function calibTab(dev, s) {
   return `<div class="grid">
     <div class="card span-7">${head(1, t("liftoff"), esc(t(["liftLow", "liftMid", "liftHigh"][s.calib.liftoff])))}<div class="card-body">
@@ -639,6 +676,10 @@ function calibTab(dev, s) {
     ${dev.caps.dynamic_sensitivity ? `<div class="card">${head(3, t("dynSens"))}<div class="card-body">
       <div class="row" style="justify-content:space-between"><span class="hint">${esc(t("dynSensHint"))}</span>
       <label class="switch"><input type="checkbox" data-act="dynsens" ${s.calib.dynamic ? "checked" : ""}><span></span></label></div>
+      ${s.calib.dynamic ? `<div class="field-label">${esc(t("curve"))}</div>
+        <div class="seg small">${[0, 1, 2, 3].map((c) => `<button class="${s.calib.curve === c ? "on" : ""}" data-act="curve" data-v="${c}">${esc(t("curve" + c))}</button>`).join("")}</div>
+        ${s.calib.curve === 3 ? `<div class="field-label">${esc(t("curveMax"))} <span id="curve-max">${s.calib.customMax.toFixed(2)}×</span></div>
+          <div class="row"><input type="range" min="1" max="2.5" step="0.05" value="${s.calib.customMax}" data-curve-max></div>` : ""}` : ""}
     </div></div>` : ""}
   </div>`;
 }
@@ -870,6 +911,10 @@ async function onClick(e) {
       s.dongle.led = +el.dataset.v;
       touch(p); applyCalib(dev, s);
       return rerender();
+    case "curve":
+      s.calib.curve = +el.dataset.v;
+      touch(p); applyCalib(dev, s);
+      return rerender();
     case "liftoff":
       s.calib.liftoff = +el.dataset.v;
       touch(p); applyCalib(dev, s);
@@ -992,6 +1037,10 @@ function onInput(e) {
     editableFx(s).speed = 5 - +el.value;
     paintPreview(dev);
     touch(p); applyLighting(dev, s);
+  } else if (el.dataset.curveMax != null) {
+    s.calib.customMax = +el.value;
+    $("#curve-max").textContent = (+el.value).toFixed(2) + "×";
+    touch(p); applyCalib(dev, s);
   } else if (el.dataset.bright != null) {
     s.lighting.brightness = +el.value;
     $("#bright-val").textContent = el.value + "%";
@@ -1037,6 +1086,12 @@ function onChange(e) {
     const p = presetFor(dev);
     p.settings.calib.dynamic = el.checked;
     touch(p); applyCalib(dev, p.settings);
+    rerender();
+  } else if (act === "button" && dev) {
+    const p = presetFor(dev);
+    p.settings.buttons[+el.dataset.b] = +el.value;
+    touch(p); applyButtons(dev, p.settings);
+    rerender();
   } else if (act === "autoapply") {
     st.autoApply = el.checked;
     saveLib();

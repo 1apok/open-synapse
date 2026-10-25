@@ -38,6 +38,7 @@ pub const UNVERIFIED: u32 = 1 << 11;
 pub const LIFTOFF: u32 = 1 << 12;
 pub const DONGLE_LED: u32 = 1 << 13;
 pub const DYNSENS: u32 = 1 << 14;
+pub const REMAP: u32 = 1 << 15;
 
 // LED ids
 pub const LED_ALL: u8 = 0x00;
@@ -110,8 +111,8 @@ pub static MODELS: &[Model] = &[
     m!(0x00B2, "DeathAdder V3", Mouse, 0x1F, 30000, M_WIRED | HYPER, NONE),
     m!(0x00B6, "DeathAdder V3 Pro (Wired)", Mouse, 0x1F, 30000, M_WIRELESS, NONE),
     m!(0x00B7, "DeathAdder V3 Pro", Mouse, 0x1F, 30000, M_WIRELESS | RECEIVER, NONE),
-    m!(0x00C0, "Viper V3 Pro (Wired)", Mouse, 0x1F, 35000, M_WIRELESS | HYPER | LIFTOFF | DYNSENS, NONE),
-    m!(0x00C1, "Viper V3 Pro", Mouse, 0x1F, 35000, M_WIRELESS | RECEIVER | HYPER | LIFTOFF | DYNSENS | DONGLE_LED, NONE),
+    m!(0x00C0, "Viper V3 Pro (Wired)", Mouse, 0x1F, 35000, M_WIRELESS | HYPER | LIFTOFF | DYNSENS | REMAP, NONE),
+    m!(0x00C1, "Viper V3 Pro", Mouse, 0x1F, 35000, M_WIRELESS | RECEIVER | HYPER | LIFTOFF | DYNSENS | DONGLE_LED | REMAP, NONE),
     // ---------------------------------------------------------- keyboards
     m!(0x0203, "BlackWidow Chroma", Keyboard, 0xFF, 0, M_STD_LIGHT, BACKLIGHT),
     m!(0x021E, "Ornata Chroma", Keyboard, 0xFF, 0, M_STD_LIGHT, BACKLIGHT),

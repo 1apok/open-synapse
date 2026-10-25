@@ -259,8 +259,56 @@ pub fn get_dynamic_sensitivity(tx: u8) -> Report {
     Report::new(tx, 0x0B, 0x90, 0x02, &[0x01])
 }
 
+/// 0 classic, 1 natural, 2 jump, 3 custom (points uploaded with curve_points).
 pub fn set_sensitivity_curve(tx: u8, curve: u8) -> Report {
-    Report::new(tx, 0x0B, 0x11, 0x02, &[0x01, curve])
+    Report::new(tx, 0x0B, 0x11, 0x02, &[0x01, curve.min(3)])
+}
+
+pub fn get_sensitivity_curve(tx: u8) -> Report {
+    Report::new(tx, 0x0B, 0x91, 0x02, &[0x01])
+}
+
+pub const CURVE_POINTS: usize = 250;
+
+/// The custom curve: 250 float32 output/input ratios, sent 8 per report.
+pub fn curve_points(tx: u8, points: &[f32]) -> Vec<Report> {
+    let n = points.len().min(CURVE_POINTS);
+    (0..n)
+        .step_by(8)
+        .map(|offset| {
+            let chunk = &points[offset..(offset + 8).min(n)];
+            let mut args = vec![0x01, 0x03, CURVE_POINTS as u8, offset as u8, chunk.len() as u8];
+            for p in chunk {
+                args.extend_from_slice(&p.to_le_bytes());
+            }
+            Report::new(tx, 0x0B, 0x13, 0x25, &args)
+        })
+        .collect()
+}
+
+/// The shape the official app uploads by default, scaled to reach max:
+/// a ramp over the first 100 samples, then flat.
+pub fn ramp_curve(max: f32) -> Vec<f32> {
+    let max = max.clamp(1.0, 3.0);
+    (0..CURVE_POINTS)
+        .map(|i| {
+            let t = ((i as f32 + 0.5) / 100.0).min(1.0);
+            1.0 + (max - 1.0) * t
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------- buttons
+
+/// Button ids reported by the Viper V3 Pro (0x02/0x84): 1 left, 2 right, 3 middle,
+/// 4 back, 5 forward, 0x60 DPI, 9 wheel up, 0x0A wheel down.
+/// Layer 0 is the standard layer, 1 is Hypershift. Kind 1 = mouse function.
+pub fn set_button_mouse(tx: u8, button: u8, layer: u8, function: u8) -> Report {
+    Report::new(tx, 0x02, 0x0C, 0x0A, &[0x01, button, layer.min(1), 0x01, 0x01, function])
+}
+
+pub fn get_button(tx: u8, button: u8, layer: u8) -> Report {
+    Report::new(tx, 0x02, 0x8C, 0x0A, &[0x01, button, layer.min(1)])
 }
 
 // ---------------------------------------------------------------- lighting
@@ -404,6 +452,19 @@ mod tests {
         assert_eq!(&set_liftoff(0x1F, 2).0[5..12], &[0x04, 0x0B, 0x0B, 0x00, 0x04, 0x01, 0x02]);
         assert_eq!(&set_dynamic_sensitivity(0x1F, true).0[5..10], &[0x02, 0x0B, 0x10, 0x01, 0x01]);
         assert_eq!(&set_sensitivity_curve(0x1F, 0).0[5..10], &[0x02, 0x0B, 0x11, 0x01, 0x00]);
+        assert_eq!(&set_button_mouse(0x1F, 5, 0, 1).0[5..14], &[0x0A, 0x02, 0x0C, 0x01, 0x05, 0x00, 0x01, 0x01, 0x01]);
+        assert_eq!(&set_button_mouse(0x1F, 5, 1, 5).0[8..14], &[0x01, 0x05, 0x01, 0x01, 0x01, 0x05]);
+    }
+
+    #[test]
+    fn default_custom_curve_matches_capture() {
+        // first and last packets the official app sent for its default custom curve
+        let pk = curve_points(0x1F, &ramp_curve(1.4975));
+        assert_eq!(pk.len(), 32);
+        assert_eq!(&pk[0].0[5..13], &[0x25, 0x0B, 0x13, 0x01, 0x03, 0xFA, 0x00, 0x08]);
+        assert_eq!(&pk[31].0[8..13], &[0x01, 0x03, 0xFA, 0xF8, 0x02]);
+        let first = f32::from_le_bytes(pk[0].0[13..17].try_into().unwrap());
+        assert!((first - 1.0025).abs() < 0.0005, "{first}");
     }
 
     #[test]

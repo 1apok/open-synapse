@@ -35,6 +35,7 @@ pub struct Caps {
     pub liftoff: bool,
     pub dongle_led: bool,
     pub dynamic_sensitivity: bool,
+    pub remap: bool,
     pub lighting: bool,
     pub brightness: bool,
     pub effects: Vec<&'static str>,
@@ -69,6 +70,9 @@ pub struct DeviceState {
     pub liftoff: Option<u8>,
     pub dongle_led: Option<u8>,
     pub dynamic_sensitivity: Option<bool>,
+    pub curve: Option<u8>,
+    /// (button id, mouse function) on the standard layer, for remappable buttons
+    pub buttons: Vec<(u8, u8)>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -93,6 +97,9 @@ pub struct Manager {
     api: Option<HidApi>,
     links: HashMap<u16, Link>,
 }
+
+/// Left and right stay fixed so a bad preset can never take the clicks away.
+pub const REMAPPABLE: [u8; 3] = [0x03, 0x04, 0x05];
 
 fn key_of(pid: u16) -> String {
     format!("1532:{pid:04x}")
@@ -148,6 +155,7 @@ fn caps_of(m: &Model) -> Caps {
         liftoff: has(LIFTOFF),
         dongle_led: has(DONGLE_LED),
         dynamic_sensitivity: has(DYNSENS),
+        remap: has(REMAP),
         lighting: has(LIGHT),
         brightness: has(BRIGHT),
         effects,
@@ -350,6 +358,17 @@ impl Manager {
         }
         if caps.dynamic_sensitivity {
             s.dynamic_sensitivity = q(protocol::get_dynamic_sensitivity(tx)).map(|r| r.args()[1] == 1);
+            s.curve = q(protocol::get_sensitivity_curve(tx)).map(|r| r.args()[1]).filter(|c| *c <= 3);
+        }
+        if caps.remap {
+            for button in REMAPPABLE {
+                if let Some(r) = q(protocol::get_button(tx, button, 0)) {
+                    let a = r.args();
+                    if a[1] == button && a[3] == 0x01 {
+                        s.buttons.push((button, a[5]));
+                    }
+                }
+            }
         }
         Ok(s)
     }
@@ -371,16 +390,37 @@ impl Manager {
         protocol::transfer(&dev, &protocol::set_dongle_led(tx, mode)).map(drop).map_err(|e| e.to_string())
     }
 
-    pub fn set_dynamic_sensitivity(&mut self, key: &str, on: bool) -> Result<(), String> {
+    pub fn set_dynamic_sensitivity(&mut self, key: &str, on: bool, curve: u8, custom_max: f32) -> Result<(), String> {
         let (dev, tx, model) = self.open(key)?;
         if model.flags & DYNSENS == 0 {
             return Err("dynamic sensitivity is not supported on this device".into());
         }
-        protocol::transfer(&dev, &protocol::set_dynamic_sensitivity(tx, on)).map_err(|e| e.to_string())?;
+        let send = |r: &Report| protocol::transfer(&dev, r).map(drop).map_err(|e| e.to_string());
+        send(&protocol::set_dynamic_sensitivity(tx, on))?;
         if on {
-            protocol::transfer(&dev, &protocol::set_sensitivity_curve(tx, 0)).map_err(|e| e.to_string())?;
+            send(&protocol::set_sensitivity_curve(tx, curve))?;
+            if curve == 3 {
+                for r in protocol::curve_points(tx, &protocol::ramp_curve(custom_max)) {
+                    send(&r)?;
+                }
+            }
         }
         Ok(())
+    }
+
+    /// Maps the middle or a side button to a mouse function (1 left .. 5 forward, 9/10 wheel).
+    pub fn set_button(&mut self, key: &str, button: u8, function: u8) -> Result<(), String> {
+        let (dev, tx, model) = self.open(key)?;
+        if model.flags & REMAP == 0 {
+            return Err("button remapping is not supported on this device".into());
+        }
+        if !REMAPPABLE.contains(&button) {
+            return Err("only the middle and side buttons can be remapped".into());
+        }
+        if ![1u8, 2, 3, 4, 5, 9, 10].contains(&function) {
+            return Err("unknown mouse function".into());
+        }
+        protocol::transfer(&dev, &protocol::set_button_mouse(tx, button, 0, function)).map(drop).map_err(|e| e.to_string())
     }
 
     pub fn set_dpi(&mut self, key: &str, x: u16, y: u16) -> Result<(), String> {
@@ -568,13 +608,40 @@ mod hardware_verify {
         let mut m = Manager::new();
         let d = m.refresh().unwrap().into_iter().find(|d| d.pid == 0x00C1 && d.online && !d.asleep).expect("awake Viper V3 Pro");
         let before = m.state(&d.key).unwrap();
-        println!("before: polling={:?} liftoff={:?} led={:?} dyn={:?}", before.polling, before.liftoff, before.dongle_led, before.dynamic_sensitivity);
+        println!("before: polling={:?} liftoff={:?} led={:?} dyn={:?} curve={:?} buttons={:02x?}", before.polling, before.liftoff, before.dongle_led, before.dynamic_sensitivity, before.curve, before.buttons);
         println!("polling {:?}", m.set_polling(&d.key, before.polling.unwrap()));
         println!("liftoff {:?}", m.set_liftoff(&d.key, before.liftoff.unwrap()));
         println!("led     {:?}", m.set_dongle_led(&d.key, before.dongle_led.unwrap()));
-        println!("dyn     {:?}", m.set_dynamic_sensitivity(&d.key, before.dynamic_sensitivity.unwrap()));
+        println!("dyn     {:?}", m.set_dynamic_sensitivity(&d.key, before.dynamic_sensitivity.unwrap(), before.curve.unwrap_or(0), 1.5));
+        for (b, f) in &before.buttons {
+            println!("button {b:02x} -> {f:02x}: {:?}", m.set_button(&d.key, *b, *f));
+        }
         std::thread::sleep(std::time::Duration::from_millis(800));
         let after = m.state(&d.key).unwrap();
-        println!("after:  polling={:?} liftoff={:?} led={:?} dyn={:?}", after.polling, after.liftoff, after.dongle_led, after.dynamic_sensitivity);
+        println!("after:  polling={:?} liftoff={:?} led={:?} dyn={:?} curve={:?} buttons={:02x?}", after.polling, after.liftoff, after.dongle_led, after.dynamic_sensitivity, after.curve, after.buttons);
+    }
+}
+
+#[cfg(test)]
+mod hardware_buttons {
+    use super::*;
+
+    /// Read-only: asks the mouse for the mapping of each button on both layers.
+    #[test]
+    #[ignore]
+    fn read_button_mappings() {
+        let mut m = Manager::new();
+        let d = m.refresh().unwrap().into_iter().find(|d| d.pid == 0x00C1 && d.online && !d.asleep).expect("awake Viper V3 Pro");
+        let (dev, tx, _) = m.open(&d.key).unwrap();
+        for layer in [0u8, 1] {
+            for button in [0x01u8, 0x02, 0x03, 0x04, 0x05, 0x60, 0x09, 0x0a] {
+                let r = protocol::transfer(&dev, &Report::new(tx, 0x02, 0x8C, 0x0A, &[0x01, button, layer]));
+                println!("layer {layer} button {button:02x}: {:?}", r.map(|r| format!("{:02x?}", &r.0[8..18])));
+            }
+        }
+        for (name, id) in [("dynamic", 0x90u8), ("curve", 0x91)] {
+            let r = protocol::transfer(&dev, &Report::new(tx, 0x0B, id, 0x02, &[0x01]));
+            println!("{name}: {:?}", r.map(|r| format!("{:02x?}", &r.0[8..10])));
+        }
     }
 }
