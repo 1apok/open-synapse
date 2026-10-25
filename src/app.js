@@ -22,7 +22,7 @@ const FX_SPEED = new Set(["wave", "reactive", "starlight"]);
 const EXT_FX = ["static", "breathing", "spectrum", "wave", "reactive", "starlight", "off"];
 const DEMO = [
   { key: "demo:viper", name: "Viper V3 Pro", kind: "mouse", wireless: true, receiver: true, firmware: "v1.04",
-    caps: { dpi: true, stages: true, max_dpi: 35000, polling: [125, 500, 1000, 2000, 4000, 8000], battery: true, idle: true, lighting: false, brightness: false, effects: [], zones: [] } },
+    caps: { dpi: true, stages: true, max_dpi: 35000, polling: [125, 500, 1000, 2000, 4000, 8000], battery: true, idle: true, liftoff: true, lighting: false, brightness: false, effects: [], zones: [] } },
   { key: "demo:basilisk", name: "Basilisk V3", kind: "mouse", firmware: "v1.10",
     caps: { dpi: true, stages: true, max_dpi: 26000, polling: [125, 500, 1000], battery: false, idle: false, lighting: true, brightness: true, effects: EXT_FX, zones: [{ id: 4, name: "logo" }, { id: 1, name: "scroll" }] } },
   { key: "demo:bw", name: "BlackWidow V4", kind: "keyboard", firmware: "v2.01",
@@ -166,6 +166,7 @@ function normalize(s = {}) {
     dpi: { stages, active: num(s.dpi?.active, 0, 0, stages.length - 1), split: !!s.dpi?.split },
     polling: num(s.polling, 1000, 125, 8000),
     lighting: { brightness: num(s.lighting?.brightness, 80, 0, 100), sync: s.lighting?.sync !== false, zones },
+    calib: { liftoff: num(s.calib?.liftoff, 1, 0, 1) },
     power: { idle: num(s.power?.idle, 300, 60, 900), lowBattery: num(s.power?.lowBattery, 15, 5, 100) },
   };
 }
@@ -182,6 +183,7 @@ function settingsFromHw(dev) {
   }
   if (hw.polling) s.polling = hw.polling;
   if (hw.idle) s.power.idle = clamp(hw.idle, 60, 900);
+  if (hw.liftoff != null) s.calib.liftoff = clamp(hw.liftoff, 0, 1);
   if (hw.low_battery) s.power.lowBattery = clamp(hw.low_battery, 5, 100);
   return s;
 }
@@ -294,7 +296,13 @@ function applyPower(dev, s) {
   debounce("power" + dev.key, () => hw(dev, "set_power", { idle: s.power.idle, lowBattery: s.power.lowBattery }), 300);
 }
 
+function applyCalib(dev, s) {
+  if (!dev.caps.liftoff) return;
+  debounce("calib" + dev.key, () => hw(dev, "set_liftoff", { level: s.calib.liftoff }), 200);
+}
+
 function applyAll(dev, p) {
+  applyCalib(dev, p.settings);
   applyDpi(dev, p.settings);
   applyPolling(dev, p.settings);
   applyLighting(dev, p.settings);
@@ -456,6 +464,7 @@ function deviceView(dev) {
     ["performance", dev.caps.dpi || dev.caps.polling.length],
     ["lighting", dev.caps.lighting],
     ["power", dev.caps.idle || dev.caps.battery],
+    ["calibration", dev.caps.liftoff],
   ].filter(([, ok]) => ok).map(([id]) => id);
   if (!tabs.includes(state.tab)) state.tab = tabs[0] || "performance";
   const idx = state.devices.indexOf(dev) + 1;
@@ -477,6 +486,7 @@ function deviceView(dev) {
   if (dev.kind === "headset") body = `<div class="grid"><div class="card"><div class="card-body"><p class="muted">${esc(t("headsetNote"))}</p></div></div></div>`;
   else if (state.tab === "performance") body = performanceTab(dev, p.settings);
   else if (state.tab === "lighting") body = lightingTab(dev, p.settings);
+  else if (state.tab === "calibration") body = calibTab(dev, p.settings);
   else body = powerTab(dev, p.settings);
 
   const [first, ...rest] = dev.name.split(" ");
@@ -599,6 +609,18 @@ function powerTab(dev, s) {
     <div class="card span-6">${head(2, t("lowBattery"), `<span id="low-val">${s.power.lowBattery}%</span>`)}<div class="card-body">
       <p class="hint" style="margin:0 0 18px">${esc(t("lowBatteryHint"))}</p>
       <div class="row"><input type="range" min="5" max="100" step="1" value="${s.power.lowBattery}" data-low></div>
+    </div></div>
+  </div>`;
+}
+
+function calibTab(dev, s) {
+  return `<div class="grid">
+    <div class="card span-7">${head(1, t("liftoff"), esc(t(s.calib.liftoff ? "liftMid" : "liftLow")))}<div class="card-body">
+      <p class="hint" style="margin:0 0 18px">${esc(t("liftoffHint"))}</p>
+      <div class="seg">${[[0, "liftLow"], [1, "liftMid"]].map(([v, k]) => `<button class="${s.calib.liftoff === v ? "on" : ""}" data-act="liftoff" data-v="${v}">${esc(t(k))}</button>`).join("")}</div>
+    </div></div>
+    <div class="card span-5">${head(2, t("resetTitle"))}<div class="card-body">
+      <p class="hint" style="margin:0">${esc(t("resetHint"))}</p>
     </div></div>
   </div>`;
 }
@@ -825,6 +847,10 @@ async function onClick(e) {
       return rerender();
     case "zone":
       state.zone = el.dataset.zone;
+      return rerender();
+    case "liftoff":
+      s.calib.liftoff = +el.dataset.v;
+      touch(p); applyCalib(dev, s);
       return rerender();
     case "dir":
       editableFx(s).direction = +el.dataset.v;

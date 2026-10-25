@@ -219,6 +219,17 @@ pub fn get_low_battery(tx: u8) -> Report {
     Report::new(tx, 0x07, 0x81, 0x01, &[])
 }
 
+/// Sensor lift-off distance. Answer layout: [varstore, 0, level, a, b].
+/// Found on a Viper V3 Pro: level 0 = low, 1 = medium; a/b are kept as read.
+pub fn get_liftoff(tx: u8) -> Report {
+    Report::new(tx, 0x0B, 0x85, 0x05, &[VARSTORE])
+}
+
+/// The device applies this asynchronously and may answer with a failure status anyway.
+pub fn set_liftoff(tx: u8, level: u8, a: u8, b: u8) -> Report {
+    Report::new(tx, 0x0B, 0x05, 0x04, &[VARSTORE, level, a, b])
+}
+
 // ---------------------------------------------------------------- lighting
 
 #[derive(Debug, Clone, Copy, PartialEq)]

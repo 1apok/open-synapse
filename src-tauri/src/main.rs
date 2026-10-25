@@ -47,6 +47,11 @@ fn set_lighting(state: State<Devices>, key: String, zone: u8, lighting: Lighting
 }
 
 #[tauri::command]
+fn set_liftoff(state: State<Devices>, key: String, level: u8) -> Result<(), String> {
+    with(&state, |m| m.set_liftoff(&key, level))
+}
+
+#[tauri::command]
 fn set_power(state: State<Devices>, key: String, idle: Option<u16>, low_battery: Option<u8>) -> Result<(), String> {
     with(&state, |m| m.set_power(&key, idle, low_battery))
 }
@@ -117,6 +122,7 @@ fn main() {
             set_polling,
             set_lighting,
             set_power,
+            set_liftoff,
             load_library,
             save_library,
             export_file,

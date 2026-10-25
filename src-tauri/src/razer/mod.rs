@@ -31,6 +31,7 @@ pub struct Caps {
     pub polling: Vec<u32>,
     pub battery: bool,
     pub idle: bool,
+    pub liftoff: bool,
     pub lighting: bool,
     pub brightness: bool,
     pub effects: Vec<&'static str>,
@@ -61,6 +62,7 @@ pub struct DeviceState {
     pub charging: Option<bool>,
     pub idle: Option<u16>,
     pub low_battery: Option<u8>,
+    pub liftoff: Option<u8>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,6 +139,7 @@ fn caps_of(m: &Model) -> Caps {
         polling,
         battery: has(BATT),
         idle: has(IDLE),
+        liftoff: has(LIFTOFF),
         lighting: has(LIGHT),
         brightness: has(BRIGHT),
         effects,
@@ -311,7 +314,22 @@ impl Manager {
             s.idle = q(protocol::get_idle_time(tx)).map(|r| u16::from_be_bytes([r.args()[0], r.args()[1]]));
             s.low_battery = q(protocol::get_low_battery(tx)).map(|r| (r.args()[0] as u16 * 100 / 255) as u8);
         }
+        if caps.liftoff {
+            s.liftoff = q(protocol::get_liftoff(tx)).map(|r| r.args()[2]);
+        }
         Ok(s)
+    }
+
+    pub fn set_liftoff(&mut self, key: &str, level: u8) -> Result<(), String> {
+        let (dev, tx, model) = self.open(key)?;
+        if model.flags & LIFTOFF == 0 {
+            return Err("lift-off is not supported on this device".into());
+        }
+        let cur = protocol::transfer(&dev, &protocol::get_liftoff(tx)).map_err(|e| e.to_string())?;
+        let a = cur.args();
+        // status is unreliable for this command, the new value shows up a moment later
+        let _ = protocol::transfer(&dev, &protocol::set_liftoff(tx, level.min(1), a[3], a[4]));
+        Ok(())
     }
 
     pub fn set_dpi(&mut self, key: &str, x: u16, y: u16) -> Result<(), String> {
@@ -459,5 +477,75 @@ mod hardware_scan {
         }
         std::fs::write(&out, lines.join("\n")).unwrap();
         println!("{} answers", lines.len());
+    }
+}
+
+#[cfg(test)]
+mod hardware_liftoff {
+    use super::*;
+
+    /// Sets lift-off to LIFTOFF (0 low, 1 medium, 2 high) and reads it back.
+    #[test]
+    #[ignore]
+    fn set_liftoff() {
+        let level: u8 = std::env::var("LIFTOFF").unwrap().parse().unwrap();
+        let mut m = Manager::new();
+        m.refresh().unwrap();
+        let (dev, tx, _) = m.open("1532:00c1").unwrap();
+        let before = protocol::transfer(&dev, &Report::new(tx, 0x0B, 0x85, 0x05, &[0x01])).unwrap();
+        println!("before {:02x?}", &before.0[8..13]);
+        let mut args = before.0[8..13].to_vec();
+        args[2] = level;
+        println!("set {:?}", protocol::transfer(&dev, &Report::new(tx, 0x0B, 0x05, 0x05, &args)).map(|r| r.0[0]));
+        let after = protocol::transfer(&dev, &Report::new(tx, 0x0B, 0x85, 0x05, &[0x01])).unwrap();
+        println!("after  {:02x?}", &after.0[8..13]);
+    }
+}
+
+#[cfg(test)]
+mod hardware_liftoff_raw {
+    use super::*;
+
+    /// Writes LIFTOFF_ARGS (hex bytes) with command 0x0B/0x05 and reads 0x0B/0x85 back.
+    #[test]
+    #[ignore]
+    fn write_liftoff_raw() {
+        let args: Vec<u8> = std::env::var("LIFTOFF_ARGS").unwrap().split(',').map(|h| u8::from_str_radix(h.trim(), 16).unwrap()).collect();
+        let mut m = Manager::new();
+        m.refresh().unwrap();
+        let (dev, tx, _) = m.open("1532:00c1").unwrap();
+        let r = protocol::transfer(&dev, &Report::new(tx, 0x0B, 0x05, args.len() as u8, &args));
+        println!("set {:?}", r.map(|r| r.0[0]));
+        let after = protocol::transfer(&dev, &Report::new(tx, 0x0B, 0x85, 0x05, &[0x01])).unwrap();
+        println!("after {:02x?}", &after.0[8..13]);
+    }
+}
+
+#[cfg(test)]
+mod hardware_liftoff_cycle {
+    use super::*;
+
+    fn read(dev: &HidDevice, tx: u8) -> Vec<u8> {
+        protocol::transfer(dev, &Report::new(tx, 0x0B, 0x85, 0x05, &[0x01])).unwrap().0[8..13].to_vec()
+    }
+
+    /// High (2) then back to medium (1), waiting for the sensor to apply each.
+    #[test]
+    #[ignore]
+    fn liftoff_high_then_medium() {
+        let mut m = Manager::new();
+        m.refresh().unwrap();
+        let (dev, tx, _) = m.open("1532:00c1").unwrap();
+        for level in [2u8, 1] {
+            let _ = protocol::transfer(&dev, &Report::new(tx, 0x0B, 0x05, 0x04, &[0x01, level, 0x0c, 0x0b]));
+            for i in 0..10 {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                let now = read(&dev, tx);
+                if now[2] == level || i == 9 {
+                    println!("level {level}: {:02x?} after {} ms", now, (i + 1) * 300);
+                    break;
+                }
+            }
+        }
     }
 }
