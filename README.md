@@ -5,9 +5,18 @@
 <h1 align="center">Open Synapse</h1>
 
 <p align="center">
-  Свободный конфигуратор для устройств Razer. Без аккаунтов, без облака, без телеметрии.<br>
-  <sub>A free, account-free configurator for Razer peripherals — <a href="#english">English below</a>.</sub>
+  A free, open-source configurator for Razer peripherals.<br>
+  Local settings. No account, cloud or telemetry.<br>
+  <a href="#english">English</a> · <a href="#зачем">Русский</a> · <a href="https://github.com/1apok/open-synapse/releases/latest">Download</a> · <a href="https://github.com/1apok/open-synapse/issues">Report a device or bug</a>
 </p>
+
+![Open Synapse: DPI stages, polling rate and device preview in the English interface](docs/images/dpi-demo.png)
+
+*Screenshot from demo mode. Device support varies; see the hardware notes below.*
+
+**Try it:** download the latest release for **Windows x64**, **Linux x64** or **macOS Apple Silicon**. Demo mode lets you explore the UI without a device. Close official Razer Synapse before configuring hardware.
+
+**Early release:** Viper V3 Pro is the main hardware-tested mouse. The model database is not a promise that every feature works on every listed device. This is an independent MIT-licensed project, not affiliated with Razer.
 
 ---
 
