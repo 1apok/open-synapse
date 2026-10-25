@@ -5,6 +5,7 @@
   "description": "Open-source, account-free configurator for Razer peripherals",
   "license": "MIT",
   "scripts": {
+    "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
     "icons": "node scripts/render-icon.mjs && tauri icon assets/icon-1024.png"
