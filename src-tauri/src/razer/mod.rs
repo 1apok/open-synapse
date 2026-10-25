@@ -571,3 +571,29 @@ mod hardware_liftoff_cycle {
         }
     }
 }
+
+#[cfg(test)]
+mod hardware_scan_tx {
+    use super::*;
+
+    /// Same as scan_gets, but with the transaction id from SCAN_TX (hex), to reach the receiver itself.
+    #[test]
+    #[ignore]
+    fn scan_gets_tx() {
+        let out = std::env::var("SCAN_OUT").expect("SCAN_OUT");
+        let tx = u8::from_str_radix(&std::env::var("SCAN_TX").expect("SCAN_TX"), 16).unwrap();
+        let mut m = Manager::new();
+        m.refresh().unwrap();
+        let (dev, _, _) = m.open("1532:00c1").unwrap();
+        let mut lines = Vec::new();
+        for class in 0x00u8..=0x10 {
+            for id in 0x80u8..=0xBF {
+                if let Ok(r) = protocol::transfer(&dev, &Report::new(tx, class, id, 0x50, &[])) {
+                    lines.push(format!("{class:02x} {id:02x} None size={:02x} {:02x?}", r.0[5], &r.0[8..8 + 24]));
+                }
+            }
+        }
+        std::fs::write(&out, lines.join("\n")).unwrap();
+        println!("tx {tx:02x}: {} answers", lines.len());
+    }
+}
