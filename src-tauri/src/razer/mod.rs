@@ -99,7 +99,7 @@ fn pid_of(key: &str) -> Result<u16, String> {
 fn caps_of(m: &Model) -> Caps {
     let has = |f: u32| m.flags & f != 0;
     let polling = if has(HYPER) {
-        vec![125, 250, 500, 1000, 2000, 4000, 8000]
+        vec![125, 500, 1000, 2000, 4000, 8000]
     } else if has(POLL) {
         vec![125, 500, 1000]
     } else {
@@ -413,5 +413,51 @@ mod hardware_write {
             println!("{}: power {:?}", d.name, m.set_power(&d.key, s.idle, None));
             println!("{}: after {:?}", d.name, m.state(&d.key));
         }
+    }
+}
+
+#[cfg(test)]
+mod hardware_raw {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn dump_stages() {
+        let mut m = Manager::new();
+        m.refresh().unwrap();
+        let (dev, tx, _) = m.open("1532:00c1").unwrap();
+        for varstore in [0x00u8, 0x01] {
+            let r = protocol::transfer(&dev, &Report::new(tx, 0x04, 0x86, 0x26, &[varstore])).unwrap();
+            println!("varstore {varstore}: size={} {:02x?}", r.0[5], &r.0[8..8 + 40]);
+        }
+    }
+}
+
+#[cfg(test)]
+mod hardware_scan {
+    use super::*;
+
+    /// Reads every "get" command (bit 7 set) of the common classes and saves the answers,
+    /// so two snapshots taken around a change in another app can be diffed.
+    #[test]
+    #[ignore]
+    fn scan_gets() {
+        let out = std::env::var("SCAN_OUT").expect("SCAN_OUT");
+        let mut m = Manager::new();
+        m.refresh().unwrap();
+        let (dev, tx, _) = m.open("1532:00c1").unwrap();
+        let mut lines = Vec::new();
+        for class in 0x00u8..=0x10 {
+            for id in 0x80u8..=0xBF {
+                for arg in [None, Some(0x00u8), Some(0x01u8)] {
+                    let args: Vec<u8> = arg.into_iter().collect();
+                    if let Ok(r) = protocol::transfer(&dev, &Report::new(tx, class, id, 0x50, &args)) {
+                        lines.push(format!("{class:02x} {id:02x} {:?} size={:02x} {:02x?}", arg, r.0[5], &r.0[8..8 + 24]));
+                    }
+                }
+            }
+        }
+        std::fs::write(&out, lines.join("\n")).unwrap();
+        println!("{} answers", lines.len());
     }
 }

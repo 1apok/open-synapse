@@ -578,3 +578,4 @@ textarea.text-input { height: 110px; padding: 10px 12px; resize: none; font: 12p
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001s !important; animation-iteration-count: 1 !important; transition-duration: 0.001s !important; }
 }
+.stage-dot { display: inline-block; width: 6px; height: 6px; margin-right: 6px; vertical-align: 1px; background: var(--sc); }

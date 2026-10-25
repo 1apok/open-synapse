@@ -15,13 +15,14 @@ const THEMES = {
   win95: ["#008080", "#c0c0c0", "#000080", "#ffffff"],
 };
 const PALETTE = ["#2ff0b0", "#22a6ff", "#7b6cff", "#ff3bd4", "#ff3355", "#ff8a3b", "#ffd23b", "#ffffff"];
+const STAGE_COLORS = ["#ff4d4d", "#3ee07a", "#4d8bff", "#2fd8e6", "#ffd23b"];
 const FX_COLOR = { static: 1, breathing: 2, reactive: 1, starlight: 1 };
 const FX_SPEED = new Set(["wave", "reactive", "starlight"]);
 
 const EXT_FX = ["static", "breathing", "spectrum", "wave", "reactive", "starlight", "off"];
 const DEMO = [
   { key: "demo:viper", name: "Viper V3 Pro", kind: "mouse", wireless: true, receiver: true, firmware: "v1.04",
-    caps: { dpi: true, stages: true, max_dpi: 35000, polling: [125, 250, 500, 1000, 2000, 4000, 8000], battery: true, idle: true, lighting: false, brightness: false, effects: [], zones: [] } },
+    caps: { dpi: true, stages: true, max_dpi: 35000, polling: [125, 500, 1000, 2000, 4000, 8000], battery: true, idle: true, lighting: false, brightness: false, effects: [], zones: [] } },
   { key: "demo:basilisk", name: "Basilisk V3", kind: "mouse", firmware: "v1.10",
     caps: { dpi: true, stages: true, max_dpi: 26000, polling: [125, 500, 1000], battery: false, idle: false, lighting: true, brightness: true, effects: EXT_FX, zones: [{ id: 4, name: "logo" }, { id: 1, name: "scroll" }] } },
   { key: "demo:bw", name: "BlackWidow V4", kind: "keyboard", firmware: "v2.01",
@@ -165,7 +166,7 @@ function normalize(s = {}) {
     dpi: { stages, active: num(s.dpi?.active, 0, 0, stages.length - 1), split: !!s.dpi?.split },
     polling: num(s.polling, 1000, 125, 8000),
     lighting: { brightness: num(s.lighting?.brightness, 80, 0, 100), sync: s.lighting?.sync !== false, zones },
-    power: { idle: num(s.power?.idle, 300, 60, 900), lowBattery: num(s.power?.lowBattery, 15, 5, 50) },
+    power: { idle: num(s.power?.idle, 300, 60, 900), lowBattery: num(s.power?.lowBattery, 15, 5, 100) },
   };
 }
 
@@ -181,7 +182,7 @@ function settingsFromHw(dev) {
   }
   if (hw.polling) s.polling = hw.polling;
   if (hw.idle) s.power.idle = clamp(hw.idle, 60, 900);
-  if (hw.low_battery) s.power.lowBattery = clamp(hw.low_battery, 5, 50);
+  if (hw.low_battery) s.power.lowBattery = clamp(hw.low_battery, 5, 100);
   return s;
 }
 
@@ -522,7 +523,7 @@ function performanceTab(dev, s) {
       <div class="dpi-big"><span class="num" id="dpi-num">${cur.x}</span><span class="unit">DPI</span></div>
       <div class="stages">
         ${s.dpi.stages.map((st, i) => `<button class="stage-chip ${i === s.dpi.active ? "selected" : ""}" data-act="stage" data-i="${i}">
-          <div class="lbl">${esc(t("stage"))} ${pad2(i + 1)}</div><div class="val" data-stage-val="${i}">${st.x}${s.dpi.split ? ` / ${st.y}` : ""}</div>
+          <div class="lbl"><i class="stage-dot" style="--sc:${STAGE_COLORS[i]}"></i>${esc(t("stage"))} ${pad2(i + 1)}</div><div class="val" data-stage-val="${i}">${st.x}${s.dpi.split ? ` / ${st.y}` : ""}</div>
           ${s.dpi.stages.length > 1 ? `<span class="x" data-act="stage-del" data-i="${i}">${I.x}</span>` : ""}
         </button>`).join("")}
         ${s.dpi.stages.length < 5 ? `<button class="stage-add" data-act="stage-add" title="${esc(t("addStage"))}">+</button>` : ""}
@@ -597,7 +598,7 @@ function powerTab(dev, s) {
     </div></div>
     <div class="card span-6">${head(2, t("lowBattery"), `<span id="low-val">${s.power.lowBattery}%</span>`)}<div class="card-body">
       <p class="hint" style="margin:0 0 18px">${esc(t("lowBatteryHint"))}</p>
-      <div class="row"><input type="range" min="5" max="50" step="1" value="${s.power.lowBattery}" data-low></div>
+      <div class="row"><input type="range" min="5" max="100" step="1" value="${s.power.lowBattery}" data-low></div>
     </div></div>
   </div>`;
 }

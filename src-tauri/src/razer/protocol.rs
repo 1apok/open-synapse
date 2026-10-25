@@ -143,7 +143,7 @@ pub fn set_dpi_stages(tx: u8, active: u8, stages: &[(u16, u16)]) -> Report {
     let stages = &stages[..stages.len().min(5)];
     let mut args = vec![VARSTORE, active.clamp(1, stages.len().max(1) as u8), stages.len() as u8];
     for (i, (x, y)) in stages.iter().enumerate() {
-        args.push(i as u8);
+        args.push(i as u8 + 1);
         args.extend_from_slice(&x.to_be_bytes());
         args.extend_from_slice(&y.to_be_bytes());
         args.extend_from_slice(&[0, 0]);
@@ -211,7 +211,7 @@ pub fn get_idle_time(tx: u8) -> Report {
 
 /// Battery percentage that triggers the low battery warning.
 pub fn set_low_battery(tx: u8, percent: u8) -> Report {
-    let raw = (percent.clamp(5, 50) as u16 * 255 / 100) as u8;
+    let raw = (percent.clamp(5, 100) as u16 * 255 / 100) as u8;
     Report::new(tx, 0x07, 0x01, 0x01, &[raw])
 }
 
@@ -347,8 +347,8 @@ mod tests {
     fn dpi_stages_layout() {
         let r = set_dpi_stages(0x1F, 2, &[(400, 400), (1600, 1600)]);
         assert_eq!(&r.0[8..11], &[0x01, 0x02, 0x02]);
-        assert_eq!(&r.0[11..18], &[0x00, 0x01, 0x90, 0x01, 0x90, 0, 0]);
-        assert_eq!(r.0[18], 0x01);
+        assert_eq!(&r.0[11..18], &[0x01, 0x01, 0x90, 0x01, 0x90, 0, 0]);
+        assert_eq!(r.0[18], 0x02);
     }
 
     #[test]
