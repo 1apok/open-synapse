@@ -215,7 +215,7 @@ svg { display: block; }
 [data-theme="win95"] .page { padding: 10px 40px 40px 10px; animation: none; }
 
 /* right-edge ruler */
-.ruler { position: absolute; top: 0; right: 0; bottom: 0; width: 44px; border-left: 1px solid var(--line); pointer-events: none;
+.ruler { position: absolute; top: 0; right: 0; bottom: 0; width: 44px; border-left: 1px solid var(--line); pointer-events: none; overflow: hidden;
   background-image: repeating-linear-gradient(180deg, var(--line-2) 0 1px, transparent 1px 12px); background-size: 8px 100%; background-repeat: repeat-y; background-position: right 0 top 0; }
 .ruler span { position: absolute; right: 12px; font: 500 9.5px/1 var(--mono); color: var(--text-3); transform: translateY(-50%); }
 [data-theme="win95"] .ruler { display: none; }

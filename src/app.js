@@ -1,5 +1,6 @@
 import { t, setLang } from "./i18n.js";
 import { deviceArt, icons } from "./art.js";
+import { PRODUCT_IMAGE } from "./devices/index.js";
 
 const tauri = window.__TAURI__;
 const invoke = tauri ? tauri.core.invoke : async () => { throw new Error("no backend"); };
@@ -49,15 +50,15 @@ const FX_SPEED = new Set(["wave", "reactive", "starlight"]);
 
 const EXT_FX = ["static", "breathing", "spectrum", "wave", "reactive", "starlight", "off"];
 const DEMO = [
-  { key: "demo:viper", name: "Viper V3 Pro", kind: "mouse", wireless: true, receiver: true, firmware: "v1.04",
+  { key: "demo:viper", pid: 0x00c1, name: "Viper V3 Pro", kind: "mouse", wireless: true, receiver: true, firmware: "v1.04",
     caps: { dpi: true, stages: true, max_dpi: 35000, polling: [125, 500, 1000, 2000, 4000, 8000], battery: true, idle: true, liftoff: true, dongle_led: true, dynamic_sensitivity: true, remap: true, lighting: false, brightness: false, effects: [], zones: [] } },
-  { key: "demo:basilisk", name: "Basilisk V3", kind: "mouse", firmware: "v1.10",
+  { key: "demo:basilisk", pid: 0x0099, name: "Basilisk V3", kind: "mouse", firmware: "v1.10",
     caps: { dpi: true, stages: true, max_dpi: 26000, polling: [125, 500, 1000], battery: false, idle: false, lighting: true, brightness: true, effects: EXT_FX, zones: [{ id: 4, name: "logo" }, { id: 1, name: "scroll" }] } },
   { key: "demo:bw", name: "BlackWidow V4", kind: "keyboard", firmware: "v2.01",
     caps: { dpi: false, stages: false, max_dpi: 0, polling: [], battery: false, idle: false, lighting: true, brightness: true, effects: EXT_FX, zones: [{ id: 5, name: "backlight" }] } },
-  { key: "demo:firefly", name: "Firefly V2", kind: "mousepad", firmware: "v1.01",
+  { key: "demo:firefly", pid: 0x0c04, name: "Firefly V2", kind: "mousepad", firmware: "v1.01",
     caps: { dpi: false, stages: false, max_dpi: 0, polling: [], battery: false, idle: false, lighting: true, brightness: true, effects: EXT_FX, zones: [{ id: 0, name: "all" }] } },
-].map((d) => ({ pid: 0, wireless: false, receiver: false, verified: true, online: true, serial: null, demo: true, ...d }));
+].map((d) => ({ pid: 0, ...d, wireless: d.wireless ?? false, receiver: false, verified: true, online: true, serial: null, demo: true, ...d }));
 
 const state = {
   lib: null,
@@ -202,6 +203,7 @@ function normalize(s = {}) {
     },
     buttons: Object.fromEntries(REMAPPABLE.map((b) => [b, normButton(b, s.buttons?.[b])])),
     dongle: { led: num(s.dongle?.led, 2, 1, 3) },
+    headset: { eq: ["game", "movie", "music"].includes(s.headset?.eq) ? s.headset.eq : "game" },
     power: { idle: num(s.power?.idle, 300, 60, 900), lowBattery: num(s.power?.lowBattery, 15, 5, 100) },
   };
 }
@@ -357,7 +359,13 @@ function applyButtons(dev, s) {
   }, 200);
 }
 
+function applyHeadset(dev, s) {
+  if (!dev.caps.eq) return;
+  debounce("eq" + dev.key, () => hw(dev, "set_headset_eq", { preset: s.headset.eq }), 200);
+}
+
 function applyAll(dev, p) {
+  applyHeadset(dev, p.settings);
   applyButtons(dev, p.settings);
   applyCalib(dev, p.settings);
   applyDpi(dev, p.settings);
@@ -444,7 +452,7 @@ function renderSidebar() {
         const active = state.view.type === "device" && state.view.key === d.key;
         const sub = d.demo ? t("demo") : d.asleep ? t("sleeping") : d.online ? (d.wireless ? t("wireless") : t("wired")) : t("asleep");
         return `<button class="dev-item ${active ? "active" : ""}" data-key="${esc(d.key)}">
-          <span class="dev-icon">${state.lib.photos[d.key] ? `<img src="${state.lib.photos[d.key]}" alt="">` : icons[d.kind] || icons.other}</span>
+          <span class="dev-icon">${devicePhoto(d) ? `<img src="${devicePhoto(d)}" alt="">` : icons[d.kind] || icons.other}</span>
           <span style="min-width:0"><div class="dev-name">${esc(d.name)}</div>
           <div class="dev-sub"><span class="dot ${d.online ? "" : "off"}"></span>${esc(sub)}</div></span>
           ${d.caps.battery && b != null ? `<span class="batt-mini">${b}%</span>` : ""}
@@ -511,14 +519,21 @@ function batteryBlock(dev) {
   </div>`;
 }
 
+// own photo first, then the bundled product picture, then the drawing
+function devicePhoto(dev) {
+  if (state.lib.photos[dev.key]) return state.lib.photos[dev.key];
+  const id = PRODUCT_IMAGE[dev.pid];
+  return id ? `devices/${id}.avif` : null;
+}
+
 function stageInner(dev) {
-  const photo = state.lib.photos[dev.key];
+  const photo = devicePhoto(dev);
   return photo ? `<img class="photo" src="${photo}" alt="">` : deviceArt(dev);
 }
 
 function deviceView(dev) {
   const p = presetFor(dev);
-  const tabs = [
+  const tabs = dev.kind === "headset" ? [] : [
     ["performance", dev.caps.dpi || dev.caps.polling.length],
     ["lighting", dev.caps.lighting],
     ["power", dev.caps.idle || dev.caps.battery],
@@ -542,7 +557,7 @@ function deviceView(dev) {
     .join("");
 
   let body = "";
-  if (dev.kind === "headset") body = `<div class="grid"><div class="card"><div class="card-body"><p class="muted">${esc(t("headsetNote"))}</p></div></div></div>`;
+  if (dev.kind === "headset") body = headsetTab(dev, p.settings);
   else if (state.tab === "performance") body = performanceTab(dev, p.settings);
   else if (state.tab === "lighting") body = lightingTab(dev, p.settings);
   else if (state.tab === "calibration") body = calibTab(dev, p.settings);
@@ -569,7 +584,7 @@ function deviceView(dev) {
       <div class="stage-wrap">
         <div class="stage" data-drop>
           <span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>
-          <span class="stage-tag">${dev.pid ? "PID " + dev.pid.toString(16).toUpperCase().padStart(4, "0") : "DEMO"} · ${esc(t("preview"))}</span>
+          <span class="stage-tag">${dev.demo ? "DEMO" : "PID " + dev.pid.toString(16).toUpperCase().padStart(4, "0")} · ${esc(t("preview"))}</span>
           ${stageInner(dev)}
         </div>
         <div class="stage-actions">
@@ -679,6 +694,17 @@ function powerTab(dev, s) {
       <div class="row"><input type="range" min="5" max="100" step="1" value="${s.power.lowBattery}" data-low></div>
     </div></div>
     ${dongleCard(dev, s, 3)}
+  </div>`;
+}
+
+function headsetTab(dev, s) {
+  if (!dev.caps.eq) return `<div class="grid"><div class="card"><div class="card-body"><p class="muted">${esc(t("headsetNote"))}</p></div></div></div>`;
+  return `<div class="grid">
+    <div class="card span-8">${head(1, t("eq"), esc(t("eq" + s.headset.eq)))}<div class="card-body">
+      <p class="hint" style="margin:0 0 18px">${esc(t("eqHint"))}</p>
+      <div class="seg small">${["game", "movie", "music"].map((k) => `<button class="${s.headset.eq === k ? "on" : ""}" data-act="eq" data-v="${k}">${esc(t("eq" + k))}</button>`).join("")}</div>
+    </div></div>
+    <div class="card span-4">${head(2, t("thx"))}<div class="card-body"><p class="hint" style="margin:0">${esc(t("thxNote"))}</p></div></div>
   </div>`;
 }
 
@@ -961,6 +987,10 @@ async function onClick(e) {
       return rerender();
     case "listen":
       state.listen = state.listen === +el.dataset.b ? null : +el.dataset.b;
+      return rerender();
+    case "eq":
+      s.headset.eq = el.dataset.v;
+      touch(p); applyHeadset(dev, s);
       return rerender();
     case "liftoff":
       s.calib.liftoff = +el.dataset.v;

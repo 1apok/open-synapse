@@ -36,6 +36,7 @@ pub struct Caps {
     pub dongle_led: bool,
     pub dynamic_sensitivity: bool,
     pub remap: bool,
+    pub eq: bool,
     pub lighting: bool,
     pub brightness: bool,
     pub effects: Vec<&'static str>,
@@ -103,6 +104,8 @@ fn default_dir() -> u8 {
 pub struct Manager {
     api: Option<HidApi>,
     links: HashMap<u16, Link>,
+    /// vendor-defined (0xFF00) interface per product, used by headsets
+    vendor_paths: HashMap<u16, CString>,
 }
 
 /// Left and right stay fixed so a bad preset can never take the clicks away.
@@ -163,6 +166,7 @@ fn caps_of(m: &Model) -> Caps {
         dongle_led: has(DONGLE_LED),
         dynamic_sensitivity: has(DYNSENS),
         remap: has(REMAP),
+        eq: has(HEADSET_EQ),
         lighting: has(LIGHT),
         brightness: has(BRIGHT),
         effects,
@@ -186,7 +190,7 @@ fn serial_of(r: &Report) -> Option<String> {
 
 impl Manager {
     pub fn new() -> Self {
-        Manager { api: HidApi::new().ok(), links: HashMap::new() }
+        Manager { api: HidApi::new().ok(), links: HashMap::new(), vendor_paths: HashMap::new() }
     }
 
     fn api(&mut self) -> Result<&mut HidApi, String> {
@@ -203,15 +207,20 @@ impl Manager {
 
         // group HID interfaces by product id
         let mut found: Vec<(u16, Option<String>, Vec<CString>)> = Vec::new();
+        let mut vendor: HashMap<u16, CString> = HashMap::new();
         for info in api.device_list().filter(|d| d.vendor_id() == RAZER_VID) {
             let pid = info.product_id();
             let path = info.path().to_owned();
+            if info.usage_page() == 0xFF00 {
+                vendor.entry(pid).or_insert_with(|| path.clone());
+            }
             match found.iter_mut().find(|(p, _, _)| *p == pid) {
                 Some((_, _, paths)) => paths.push(path),
                 None => found.push((pid, info.product_string().map(str::to_owned), vec![path])),
             }
         }
 
+        self.vendor_paths = vendor;
         self.links.retain(|pid, _| found.iter().any(|(p, _, _)| p == pid));
         let sleeping: Vec<u16> = self.links.iter().filter(|(_, l)| l.asleep_at_probe).map(|(p, _)| *p).collect();
         for pid in sleeping {
@@ -223,6 +232,16 @@ impl Manager {
         let mut out = Vec::new();
         for (pid, product, paths) in found {
             let model = lookup(pid, product.as_deref());
+            if model.flags & HEADSET_EQ != 0 {
+                // headsets do not answer the mouse protocol; reachable means online
+                let online = self.vendor_paths.contains_key(&pid);
+                out.push(DeviceView {
+                    key: key_of(pid), pid, name: model.name.to_string(), kind: model.kind,
+                    wireless: true, receiver: true, verified: true, online, asleep: false,
+                    firmware: None, serial: None, caps: caps_of(&model),
+                });
+                continue;
+            }
             if !self.links.contains_key(&pid) {
                 if let Some(link) = self.probe(&model, &paths) {
                     self.links.insert(pid, link);
@@ -306,6 +325,9 @@ impl Manager {
     }
 
     pub fn state(&mut self, key: &str) -> Result<DeviceState, String> {
+        if lookup(pid_of(key)?, None).flags & HEADSET_EQ != 0 {
+            return Ok(DeviceState::default());
+        }
         let (dev, tx, model) = self.open(key)?;
         let caps = caps_of(&model);
         let q = |r: Report| protocol::transfer(&dev, &r).ok();
@@ -495,6 +517,22 @@ impl Manager {
             .filter(|d| d.vendor_id() == RAZER_VID)
             .map(|d| format!("{:04x} if={} up={:04x} u={:04x} {}", d.product_id(), d.interface_number(), d.usage_page(), d.usage(), d.path().to_string_lossy()))
             .collect()
+    }
+
+    pub fn set_headset_eq(&mut self, key: &str, preset: &str) -> Result<(), String> {
+        let pid = pid_of(key)?;
+        if lookup(pid, None).flags & HEADSET_EQ == 0 {
+            return Err("EQ presets are not supported on this device".into());
+        }
+        let code = match preset {
+            "game" => 0x07,
+            "movie" => 0x09,
+            "music" => 0x08,
+            _ => return Err("unknown preset".into()),
+        };
+        let path = self.vendor_paths.get(&pid).cloned().ok_or("headset is not connected")?;
+        let dev = self.api()?.open_path(&path).map_err(|e| e.to_string())?;
+        dev.write(&protocol::headset_eq_report(code)).map(drop).map_err(|e| e.to_string())
     }
 
     pub fn set_power(&mut self, key: &str, idle: Option<u16>, low_battery: Option<u8>) -> Result<(), String> {
@@ -706,5 +744,19 @@ mod hardware_change {
         std::thread::sleep(std::time::Duration::from_millis(500));
         let back = m.state(&d.key).unwrap();
         println!("restored: buttons={:02x?} dyn={:?} curve={:?}", back.buttons, back.dynamic_sensitivity, back.curve);
+    }
+}
+
+#[cfg(test)]
+mod hardware_headset {
+    use super::*;
+
+    /// Sends the Game EQ preset (the headset's current one) and reports whether the write went through.
+    #[test]
+    #[ignore]
+    fn headset_eq_game() {
+        let mut m = Manager::new();
+        m.refresh().unwrap();
+        println!("headset eq game: {:?}", m.set_headset_eq("1532:0555", "game"));
     }
 }

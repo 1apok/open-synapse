@@ -67,6 +67,11 @@ fn set_button(state: State<Devices>, key: String, map: razer::ButtonMap) -> Resu
 }
 
 #[tauri::command]
+fn set_headset_eq(state: State<Devices>, key: String, preset: String) -> Result<(), String> {
+    with(&state, |m| m.set_headset_eq(&key, &preset))
+}
+
+#[tauri::command]
 fn set_power(state: State<Devices>, key: String, idle: Option<u16>, low_battery: Option<u8>) -> Result<(), String> {
     with(&state, |m| m.set_power(&key, idle, low_battery))
 }
@@ -141,6 +146,7 @@ fn main() {
             set_dongle_led,
             set_dynamic_sensitivity,
             set_button,
+            set_headset_eq,
             load_library,
             save_library,
             export_file,

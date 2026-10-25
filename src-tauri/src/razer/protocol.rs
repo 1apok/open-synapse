@@ -298,6 +298,16 @@ pub fn ramp_curve(max: f32) -> Vec<f32> {
         .collect()
 }
 
+// ---------------------------------------------------------------- headsets
+
+/// BlackShark V2 Pro EQ preset, a 64-byte output report on the vendor interface,
+/// byte for byte as the official app sends it. Presets: 7 game, 9 movie, 8 music.
+pub fn headset_eq_report(preset: u8) -> [u8; 64] {
+    let mut r = [0u8; 64];
+    r[..14].copy_from_slice(&[0x02, 0x80, 0x09, 0x00, 0x00, 0x50, 0x41, 0x08, 0x00, 0x04, 0x93, 0x00, 0x01, preset]);
+    r
+}
+
 // ---------------------------------------------------------------- buttons
 
 /// Button ids reported by the Viper V3 Pro (0x02/0x84): 1 left, 2 right, 3 middle,
