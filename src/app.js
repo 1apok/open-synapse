@@ -22,7 +22,7 @@ const FX_SPEED = new Set(["wave", "reactive", "starlight"]);
 const EXT_FX = ["static", "breathing", "spectrum", "wave", "reactive", "starlight", "off"];
 const DEMO = [
   { key: "demo:viper", name: "Viper V3 Pro", kind: "mouse", wireless: true, receiver: true, firmware: "v1.04",
-    caps: { dpi: true, stages: true, max_dpi: 35000, polling: [125, 500, 1000, 2000, 4000, 8000], battery: true, idle: true, liftoff: true, lighting: false, brightness: false, effects: [], zones: [] } },
+    caps: { dpi: true, stages: true, max_dpi: 35000, polling: [125, 500, 1000, 2000, 4000, 8000], battery: true, idle: true, liftoff: true, dongle_led: true, dynamic_sensitivity: true, lighting: false, brightness: false, effects: [], zones: [] } },
   { key: "demo:basilisk", name: "Basilisk V3", kind: "mouse", firmware: "v1.10",
     caps: { dpi: true, stages: true, max_dpi: 26000, polling: [125, 500, 1000], battery: false, idle: false, lighting: true, brightness: true, effects: EXT_FX, zones: [{ id: 4, name: "logo" }, { id: 1, name: "scroll" }] } },
   { key: "demo:bw", name: "BlackWidow V4", kind: "keyboard", firmware: "v2.01",
@@ -166,7 +166,8 @@ function normalize(s = {}) {
     dpi: { stages, active: num(s.dpi?.active, 0, 0, stages.length - 1), split: !!s.dpi?.split },
     polling: num(s.polling, 1000, 125, 8000),
     lighting: { brightness: num(s.lighting?.brightness, 80, 0, 100), sync: s.lighting?.sync !== false, zones },
-    calib: { liftoff: num(s.calib?.liftoff, 1, 0, 1) },
+    calib: { liftoff: num(s.calib?.liftoff, 1, 0, 2), dynamic: !!s.calib?.dynamic },
+    dongle: { led: num(s.dongle?.led, 2, 1, 3) },
     power: { idle: num(s.power?.idle, 300, 60, 900), lowBattery: num(s.power?.lowBattery, 15, 5, 100) },
   };
 }
@@ -183,7 +184,9 @@ function settingsFromHw(dev) {
   }
   if (hw.polling) s.polling = hw.polling;
   if (hw.idle) s.power.idle = clamp(hw.idle, 60, 900);
-  if (hw.liftoff != null) s.calib.liftoff = clamp(hw.liftoff, 0, 1);
+  if (hw.liftoff != null) s.calib.liftoff = clamp(hw.liftoff, 0, 2);
+  if (hw.dynamic_sensitivity != null) s.calib.dynamic = hw.dynamic_sensitivity;
+  if (hw.dongle_led != null) s.dongle.led = hw.dongle_led;
   if (hw.low_battery) s.power.lowBattery = clamp(hw.low_battery, 5, 100);
   return s;
 }
@@ -297,8 +300,9 @@ function applyPower(dev, s) {
 }
 
 function applyCalib(dev, s) {
-  if (!dev.caps.liftoff) return;
-  debounce("calib" + dev.key, () => hw(dev, "set_liftoff", { level: s.calib.liftoff }), 200);
+  if (dev.caps.liftoff) debounce("calib" + dev.key, () => hw(dev, "set_liftoff", { level: s.calib.liftoff }), 200);
+  if (dev.caps.dynamic_sensitivity) debounce("dyn" + dev.key, () => hw(dev, "set_dynamic_sensitivity", { on: s.calib.dynamic }), 200);
+  if (dev.caps.dongle_led) debounce("led" + dev.key, () => hw(dev, "set_dongle_led", { mode: s.dongle.led }), 200);
 }
 
 function applyAll(dev, p) {
@@ -599,6 +603,14 @@ function lightingTab(dev, s) {
   </div>`;
 }
 
+function dongleCard(dev, s, n) {
+  if (!dev.caps.dongle_led) return "";
+  return `<div class="card">${head(n, t("dongleLed"))}<div class="card-body">
+    <p class="hint" style="margin:0 0 18px">${esc(t("dongleLedHint"))}</p>
+    <div class="seg small">${[[1, "ledConn"], [2, "ledBatt"], [3, "ledLow"]].map(([v, k]) => `<button class="${s.dongle.led === v ? "on" : ""}" data-act="dongle-led" data-v="${v}">${esc(t(k))}</button>`).join("")}</div>
+  </div></div>`;
+}
+
 function powerTab(dev, s) {
   if (!dev.caps.idle && !dev.caps.battery) return `<div class="grid"><div class="card"><div class="card-body"><p class="muted">${esc(t("noPower"))}</p></div></div></div>`;
   const mins = Math.round(s.power.idle / 60);
@@ -611,18 +623,23 @@ function powerTab(dev, s) {
       <p class="hint" style="margin:0 0 18px">${esc(t("lowBatteryHint"))}</p>
       <div class="row"><input type="range" min="5" max="100" step="1" value="${s.power.lowBattery}" data-low></div>
     </div></div>
+    ${dongleCard(dev, s, 3)}
   </div>`;
 }
 
 function calibTab(dev, s) {
   return `<div class="grid">
-    <div class="card span-7">${head(1, t("liftoff"), esc(t(s.calib.liftoff ? "liftMid" : "liftLow")))}<div class="card-body">
+    <div class="card span-7">${head(1, t("liftoff"), esc(t(["liftLow", "liftMid", "liftHigh"][s.calib.liftoff])))}<div class="card-body">
       <p class="hint" style="margin:0 0 18px">${esc(t("liftoffHint"))}</p>
-      <div class="seg">${[[0, "liftLow"], [1, "liftMid"]].map(([v, k]) => `<button class="${s.calib.liftoff === v ? "on" : ""}" data-act="liftoff" data-v="${v}">${esc(t(k))}</button>`).join("")}</div>
+      <div class="seg">${[[0, "liftLow"], [1, "liftMid"], [2, "liftHigh"]].map(([v, k]) => `<button class="${s.calib.liftoff === v ? "on" : ""}" data-act="liftoff" data-v="${v}">${esc(t(k))}</button>`).join("")}</div>
     </div></div>
     <div class="card span-5">${head(2, t("resetTitle"))}<div class="card-body">
       <p class="hint" style="margin:0">${esc(t("resetHint"))}</p>
     </div></div>
+    ${dev.caps.dynamic_sensitivity ? `<div class="card">${head(3, t("dynSens"))}<div class="card-body">
+      <div class="row" style="justify-content:space-between"><span class="hint">${esc(t("dynSensHint"))}</span>
+      <label class="switch"><input type="checkbox" data-act="dynsens" ${s.calib.dynamic ? "checked" : ""}><span></span></label></div>
+    </div></div>` : ""}
   </div>`;
 }
 
@@ -849,6 +866,10 @@ async function onClick(e) {
     case "zone":
       state.zone = el.dataset.zone;
       return rerender();
+    case "dongle-led":
+      s.dongle.led = +el.dataset.v;
+      touch(p); applyCalib(dev, s);
+      return rerender();
     case "liftoff":
       s.calib.liftoff = +el.dataset.v;
       touch(p); applyCalib(dev, s);
@@ -1012,6 +1033,10 @@ function onChange(e) {
     editableFx(p.settings).two = el.checked;
     touch(p); applyLighting(dev, p.settings);
     rerender();
+  } else if (act === "dynsens" && dev) {
+    const p = presetFor(dev);
+    p.settings.calib.dynamic = el.checked;
+    touch(p); applyCalib(dev, p.settings);
   } else if (act === "autoapply") {
     st.autoApply = el.checked;
     saveLib();

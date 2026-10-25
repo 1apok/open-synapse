@@ -183,12 +183,13 @@ pub fn hyper_code(hz: u32) -> u8 {
     }
 }
 
+// Captured from the official app on a Viper V3 Pro: the first argument is 0x01.
 pub fn set_hyper_polling(tx: u8, hz: u32) -> Report {
-    Report::new(tx, 0x00, 0x40, 0x02, &[0x00, hyper_code(hz)])
+    Report::new(tx, 0x00, 0x40, 0x02, &[0x01, hyper_code(hz)])
 }
 
 pub fn get_hyper_polling(tx: u8) -> Report {
-    Report::new(tx, 0x00, 0xC0, 0x02, &[0x00])
+    Report::new(tx, 0x00, 0xC0, 0x02, &[0x01])
 }
 
 /// Receiver link status. args[1] is 1 while the paired mouse is awake and in range,
@@ -225,15 +226,41 @@ pub fn get_low_battery(tx: u8) -> Report {
     Report::new(tx, 0x07, 0x81, 0x01, &[])
 }
 
-/// Sensor lift-off distance. Answer layout: [varstore, 0, level, a, b].
-/// Found on a Viper V3 Pro: level 0 = low, 1 = medium; a/b are kept as read.
+/// Sensor lift-off distance, read back as [varstore, 0, level, ..]: 0 low, 1 medium, 2 high.
 pub fn get_liftoff(tx: u8) -> Report {
     Report::new(tx, 0x0B, 0x85, 0x05, &[VARSTORE])
 }
 
-/// The device applies this asynchronously and may answer with a failure status anyway.
-pub fn set_liftoff(tx: u8, level: u8, a: u8, b: u8) -> Report {
-    Report::new(tx, 0x0B, 0x05, 0x04, &[VARSTORE, level, a, b])
+/// The official app sends these two in a row (captured on a Viper V3 Pro):
+/// tracking mode, then the lift-off level.
+pub fn set_tracking_mode(tx: u8) -> Report {
+    Report::new(tx, 0x0B, 0x03, 0x03, &[0x00, 0x04, 0x01])
+}
+
+pub fn set_liftoff(tx: u8, level: u8) -> Report {
+    Report::new(tx, 0x0B, 0x0B, 0x04, &[0x00, 0x04, 0x01, level.min(2)])
+}
+
+/// Dongle LED: 1 = connection status, 2 = battery level, 3 = low battery warning only.
+pub fn set_dongle_led(tx: u8, mode: u8) -> Report {
+    Report::new(tx, 0x07, 0x10, 0x01, &[mode.clamp(1, 3)])
+}
+
+pub fn get_dongle_led(tx: u8) -> Report {
+    Report::new(tx, 0x07, 0x90, 0x01, &[])
+}
+
+/// Dynamic sensitivity (output acceleration) on/off; curve 0 = classic.
+pub fn set_dynamic_sensitivity(tx: u8, on: bool) -> Report {
+    Report::new(tx, 0x0B, 0x10, 0x02, &[0x01, on as u8])
+}
+
+pub fn get_dynamic_sensitivity(tx: u8) -> Report {
+    Report::new(tx, 0x0B, 0x90, 0x02, &[0x01])
+}
+
+pub fn set_sensitivity_curve(tx: u8, curve: u8) -> Report {
+    Report::new(tx, 0x0B, 0x11, 0x02, &[0x01, curve])
 }
 
 // ---------------------------------------------------------------- lighting
@@ -366,6 +393,17 @@ mod tests {
         assert_eq!(&r.0[8..11], &[0x01, 0x02, 0x02]);
         assert_eq!(&r.0[11..18], &[0x01, 0x01, 0x90, 0x01, 0x90, 0, 0]);
         assert_eq!(r.0[18], 0x02);
+    }
+
+    #[test]
+    fn captured_commands_layout() {
+        // byte-for-byte what the official app sent (transaction id aside)
+        assert_eq!(&set_hyper_polling(0x1F, 2000).0[5..10], &[0x02, 0x00, 0x40, 0x01, 0x04]);
+        assert_eq!(&set_dongle_led(0x1F, 3).0[5..9], &[0x01, 0x07, 0x10, 0x03]);
+        assert_eq!(&set_tracking_mode(0x1F).0[5..11], &[0x03, 0x0B, 0x03, 0x00, 0x04, 0x01]);
+        assert_eq!(&set_liftoff(0x1F, 2).0[5..12], &[0x04, 0x0B, 0x0B, 0x00, 0x04, 0x01, 0x02]);
+        assert_eq!(&set_dynamic_sensitivity(0x1F, true).0[5..10], &[0x02, 0x0B, 0x10, 0x01, 0x01]);
+        assert_eq!(&set_sensitivity_curve(0x1F, 0).0[5..10], &[0x02, 0x0B, 0x11, 0x01, 0x00]);
     }
 
     #[test]

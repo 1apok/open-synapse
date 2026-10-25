@@ -33,6 +33,8 @@ pub struct Caps {
     pub battery: bool,
     pub idle: bool,
     pub liftoff: bool,
+    pub dongle_led: bool,
+    pub dynamic_sensitivity: bool,
     pub lighting: bool,
     pub brightness: bool,
     pub effects: Vec<&'static str>,
@@ -65,6 +67,8 @@ pub struct DeviceState {
     pub idle: Option<u16>,
     pub low_battery: Option<u8>,
     pub liftoff: Option<u8>,
+    pub dongle_led: Option<u8>,
+    pub dynamic_sensitivity: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -142,6 +146,8 @@ fn caps_of(m: &Model) -> Caps {
         battery: has(BATT),
         idle: has(IDLE),
         liftoff: has(LIFTOFF),
+        dongle_led: has(DONGLE_LED),
+        dynamic_sensitivity: has(DYNSENS),
         lighting: has(LIGHT),
         brightness: has(BRIGHT),
         effects,
@@ -339,6 +345,12 @@ impl Manager {
         if caps.liftoff {
             s.liftoff = q(protocol::get_liftoff(tx)).map(|r| r.args()[2]);
         }
+        if caps.dongle_led {
+            s.dongle_led = q(protocol::get_dongle_led(tx)).map(|r| r.args()[0]).filter(|m| (1..=3).contains(m));
+        }
+        if caps.dynamic_sensitivity {
+            s.dynamic_sensitivity = q(protocol::get_dynamic_sensitivity(tx)).map(|r| r.args()[1] == 1);
+        }
         Ok(s)
     }
 
@@ -347,10 +359,27 @@ impl Manager {
         if model.flags & LIFTOFF == 0 {
             return Err("lift-off is not supported on this device".into());
         }
-        let cur = protocol::transfer(&dev, &protocol::get_liftoff(tx)).map_err(|e| e.to_string())?;
-        let a = cur.args();
-        // status is unreliable for this command, the new value shows up a moment later
-        let _ = protocol::transfer(&dev, &protocol::set_liftoff(tx, level.min(1), a[3], a[4]));
+        protocol::transfer(&dev, &protocol::set_tracking_mode(tx)).map_err(|e| e.to_string())?;
+        protocol::transfer(&dev, &protocol::set_liftoff(tx, level)).map(drop).map_err(|e| e.to_string())
+    }
+
+    pub fn set_dongle_led(&mut self, key: &str, mode: u8) -> Result<(), String> {
+        let (dev, tx, model) = self.open(key)?;
+        if model.flags & DONGLE_LED == 0 {
+            return Err("dongle LED is not supported on this device".into());
+        }
+        protocol::transfer(&dev, &protocol::set_dongle_led(tx, mode)).map(drop).map_err(|e| e.to_string())
+    }
+
+    pub fn set_dynamic_sensitivity(&mut self, key: &str, on: bool) -> Result<(), String> {
+        let (dev, tx, model) = self.open(key)?;
+        if model.flags & DYNSENS == 0 {
+            return Err("dynamic sensitivity is not supported on this device".into());
+        }
+        protocol::transfer(&dev, &protocol::set_dynamic_sensitivity(tx, on)).map_err(|e| e.to_string())?;
+        if on {
+            protocol::transfer(&dev, &protocol::set_sensitivity_curve(tx, 0)).map_err(|e| e.to_string())?;
+        }
         Ok(())
     }
 
@@ -503,76 +532,6 @@ mod hardware_scan {
 }
 
 #[cfg(test)]
-mod hardware_liftoff {
-    use super::*;
-
-    /// Sets lift-off to LIFTOFF (0 low, 1 medium, 2 high) and reads it back.
-    #[test]
-    #[ignore]
-    fn set_liftoff() {
-        let level: u8 = std::env::var("LIFTOFF").unwrap().parse().unwrap();
-        let mut m = Manager::new();
-        m.refresh().unwrap();
-        let (dev, tx, _) = m.open("1532:00c1").unwrap();
-        let before = protocol::transfer(&dev, &Report::new(tx, 0x0B, 0x85, 0x05, &[0x01])).unwrap();
-        println!("before {:02x?}", &before.0[8..13]);
-        let mut args = before.0[8..13].to_vec();
-        args[2] = level;
-        println!("set {:?}", protocol::transfer(&dev, &Report::new(tx, 0x0B, 0x05, 0x05, &args)).map(|r| r.0[0]));
-        let after = protocol::transfer(&dev, &Report::new(tx, 0x0B, 0x85, 0x05, &[0x01])).unwrap();
-        println!("after  {:02x?}", &after.0[8..13]);
-    }
-}
-
-#[cfg(test)]
-mod hardware_liftoff_raw {
-    use super::*;
-
-    /// Writes LIFTOFF_ARGS (hex bytes) with command 0x0B/0x05 and reads 0x0B/0x85 back.
-    #[test]
-    #[ignore]
-    fn write_liftoff_raw() {
-        let args: Vec<u8> = std::env::var("LIFTOFF_ARGS").unwrap().split(',').map(|h| u8::from_str_radix(h.trim(), 16).unwrap()).collect();
-        let mut m = Manager::new();
-        m.refresh().unwrap();
-        let (dev, tx, _) = m.open("1532:00c1").unwrap();
-        let r = protocol::transfer(&dev, &Report::new(tx, 0x0B, 0x05, args.len() as u8, &args));
-        println!("set {:?}", r.map(|r| r.0[0]));
-        let after = protocol::transfer(&dev, &Report::new(tx, 0x0B, 0x85, 0x05, &[0x01])).unwrap();
-        println!("after {:02x?}", &after.0[8..13]);
-    }
-}
-
-#[cfg(test)]
-mod hardware_liftoff_cycle {
-    use super::*;
-
-    fn read(dev: &HidDevice, tx: u8) -> Vec<u8> {
-        protocol::transfer(dev, &Report::new(tx, 0x0B, 0x85, 0x05, &[0x01])).unwrap().0[8..13].to_vec()
-    }
-
-    /// High (2) then back to medium (1), waiting for the sensor to apply each.
-    #[test]
-    #[ignore]
-    fn liftoff_high_then_medium() {
-        let mut m = Manager::new();
-        m.refresh().unwrap();
-        let (dev, tx, _) = m.open("1532:00c1").unwrap();
-        for level in [2u8, 1] {
-            let _ = protocol::transfer(&dev, &Report::new(tx, 0x0B, 0x05, 0x04, &[0x01, level, 0x0c, 0x0b]));
-            for i in 0..10 {
-                std::thread::sleep(std::time::Duration::from_millis(300));
-                let now = read(&dev, tx);
-                if now[2] == level || i == 9 {
-                    println!("level {level}: {:02x?} after {} ms", now, (i + 1) * 300);
-                    break;
-                }
-            }
-        }
-    }
-}
-
-#[cfg(test)]
 mod hardware_scan_tx {
     use super::*;
 
@@ -595,5 +554,27 @@ mod hardware_scan_tx {
         }
         std::fs::write(&out, lines.join("\n")).unwrap();
         println!("tx {tx:02x}: {} answers", lines.len());
+    }
+}
+
+#[cfg(test)]
+mod hardware_verify {
+    use super::*;
+
+    /// Writes the values the Viper V3 Pro already has through the new commands and reads them back.
+    #[test]
+    #[ignore]
+    fn rewrite_captured_settings() {
+        let mut m = Manager::new();
+        let d = m.refresh().unwrap().into_iter().find(|d| d.pid == 0x00C1 && d.online && !d.asleep).expect("awake Viper V3 Pro");
+        let before = m.state(&d.key).unwrap();
+        println!("before: polling={:?} liftoff={:?} led={:?} dyn={:?}", before.polling, before.liftoff, before.dongle_led, before.dynamic_sensitivity);
+        println!("polling {:?}", m.set_polling(&d.key, before.polling.unwrap()));
+        println!("liftoff {:?}", m.set_liftoff(&d.key, before.liftoff.unwrap()));
+        println!("led     {:?}", m.set_dongle_led(&d.key, before.dongle_led.unwrap()));
+        println!("dyn     {:?}", m.set_dynamic_sensitivity(&d.key, before.dynamic_sensitivity.unwrap()));
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        let after = m.state(&d.key).unwrap();
+        println!("after:  polling={:?} liftoff={:?} led={:?} dyn={:?}", after.polling, after.liftoff, after.dongle_led, after.dynamic_sensitivity);
     }
 }

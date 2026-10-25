@@ -52,6 +52,16 @@ fn set_liftoff(state: State<Devices>, key: String, level: u8) -> Result<(), Stri
 }
 
 #[tauri::command]
+fn set_dongle_led(state: State<Devices>, key: String, mode: u8) -> Result<(), String> {
+    with(&state, |m| m.set_dongle_led(&key, mode))
+}
+
+#[tauri::command]
+fn set_dynamic_sensitivity(state: State<Devices>, key: String, on: bool) -> Result<(), String> {
+    with(&state, |m| m.set_dynamic_sensitivity(&key, on))
+}
+
+#[tauri::command]
 fn set_power(state: State<Devices>, key: String, idle: Option<u16>, low_battery: Option<u8>) -> Result<(), String> {
     with(&state, |m| m.set_power(&key, idle, low_battery))
 }
@@ -123,6 +133,8 @@ fn main() {
             set_lighting,
             set_power,
             set_liftoff,
+            set_dongle_led,
+            set_dynamic_sensitivity,
             load_library,
             save_library,
             export_file,
