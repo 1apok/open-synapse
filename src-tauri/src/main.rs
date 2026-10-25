@@ -62,8 +62,8 @@ fn set_dynamic_sensitivity(state: State<Devices>, key: String, on: bool, curve: 
 }
 
 #[tauri::command]
-fn set_button(state: State<Devices>, key: String, button: u8, function: u8) -> Result<(), String> {
-    with(&state, |m| m.set_button(&key, button, function))
+fn set_button(state: State<Devices>, key: String, map: razer::ButtonMap) -> Result<(), String> {
+    with(&state, |m| m.set_button(&key, &map))
 }
 
 #[tauri::command]

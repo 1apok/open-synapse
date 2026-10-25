@@ -71,8 +71,15 @@ pub struct DeviceState {
     pub dongle_led: Option<u8>,
     pub dynamic_sensitivity: Option<bool>,
     pub curve: Option<u8>,
-    /// (button id, mouse function) on the standard layer, for remappable buttons
-    pub buttons: Vec<(u8, u8)>,
+    /// mappings of the remappable buttons on the standard layer
+    pub buttons: Vec<ButtonMap>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum ButtonMap {
+    Mouse { button: u8, function: u8 },
+    Key { button: u8, modifiers: u8, usage: u8 },
 }
 
 #[derive(Debug, Deserialize)]
@@ -365,7 +372,9 @@ impl Manager {
                 if let Some(r) = q(protocol::get_button(tx, button, 0)) {
                     let a = r.args();
                     if a[1] == button && a[3] == 0x01 {
-                        s.buttons.push((button, a[5]));
+                        s.buttons.push(ButtonMap::Mouse { button, function: a[5] });
+                    } else if a[1] == button && a[3] == 0x02 {
+                        s.buttons.push(ButtonMap::Key { button, modifiers: a[5], usage: a[6] });
                     }
                 }
             }
@@ -408,19 +417,37 @@ impl Manager {
         Ok(())
     }
 
-    /// Maps the middle or a side button to a mouse function (1 left .. 5 forward, 9/10 wheel).
-    pub fn set_button(&mut self, key: &str, button: u8, function: u8) -> Result<(), String> {
+    /// Maps the middle or a side button to a mouse function or a keyboard key.
+    pub fn set_button(&mut self, key: &str, map: &ButtonMap) -> Result<(), String> {
         let (dev, tx, model) = self.open(key)?;
         if model.flags & REMAP == 0 {
             return Err("button remapping is not supported on this device".into());
         }
-        if !REMAPPABLE.contains(&button) {
-            return Err("only the middle and side buttons can be remapped".into());
+        let report = match *map {
+            ButtonMap::Mouse { button, function } => {
+                if ![1u8, 2, 3, 4, 5, 9, 10].contains(&function) {
+                    return Err("unknown mouse function".into());
+                }
+                Self::check_button(button)?;
+                protocol::set_button_mouse(tx, button, 0, function)
+            }
+            ButtonMap::Key { button, modifiers, usage } => {
+                if !(0x04..=0xE7).contains(&usage) {
+                    return Err("unknown key".into());
+                }
+                Self::check_button(button)?;
+                protocol::set_button_key(tx, button, 0, modifiers & 0x0F, usage)
+            }
+        };
+        protocol::transfer(&dev, &report).map(drop).map_err(|e| e.to_string())
+    }
+
+    fn check_button(button: u8) -> Result<(), String> {
+        if REMAPPABLE.contains(&button) {
+            Ok(())
+        } else {
+            Err("only the middle and side buttons can be remapped".into())
         }
-        if ![1u8, 2, 3, 4, 5, 9, 10].contains(&function) {
-            return Err("unknown mouse function".into());
-        }
-        protocol::transfer(&dev, &protocol::set_button_mouse(tx, button, 0, function)).map(drop).map_err(|e| e.to_string())
     }
 
     pub fn set_dpi(&mut self, key: &str, x: u16, y: u16) -> Result<(), String> {
@@ -613,8 +640,8 @@ mod hardware_verify {
         println!("liftoff {:?}", m.set_liftoff(&d.key, before.liftoff.unwrap()));
         println!("led     {:?}", m.set_dongle_led(&d.key, before.dongle_led.unwrap()));
         println!("dyn     {:?}", m.set_dynamic_sensitivity(&d.key, before.dynamic_sensitivity.unwrap(), before.curve.unwrap_or(0), 1.5));
-        for (b, f) in &before.buttons {
-            println!("button {b:02x} -> {f:02x}: {:?}", m.set_button(&d.key, *b, *f));
+        for map in &before.buttons {
+            println!("button {map:?}: {:?}", m.set_button(&d.key, map));
         }
         std::thread::sleep(std::time::Duration::from_millis(800));
         let after = m.state(&d.key).unwrap();
@@ -643,5 +670,41 @@ mod hardware_buttons {
             let r = protocol::transfer(&dev, &Report::new(tx, 0x0B, id, 0x02, &[0x01]));
             println!("{name}: {:?}", r.map(|r| format!("{:02x?}", &r.0[8..10])));
         }
+    }
+}
+
+#[cfg(test)]
+mod hardware_change {
+    use super::*;
+
+    /// Changes button 5 and the curve, reads them back, then restores the originals.
+    #[test]
+    #[ignore]
+    fn change_and_restore() {
+        let mut m = Manager::new();
+        let d = m.refresh().unwrap().into_iter().find(|d| d.pid == 0x00C1 && d.online && !d.asleep).expect("awake Viper V3 Pro");
+        let orig = m.state(&d.key).unwrap();
+        let b5 = orig.buttons.iter().find(|b| matches!(b, ButtonMap::Mouse { button: 5, .. } | ButtonMap::Key { button: 5, .. })).cloned().unwrap();
+        println!("orig: button5={b5:?} dyn={:?} curve={:?}", orig.dynamic_sensitivity, orig.curve);
+
+        m.set_button(&d.key, &ButtonMap::Mouse { button: 5, function: 4 }).unwrap();
+        m.set_dynamic_sensitivity(&d.key, true, 1, 1.5).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let changed = m.state(&d.key).unwrap();
+        println!("changed: buttons={:02x?} dyn={:?} curve={:?}", changed.buttons, changed.dynamic_sensitivity, changed.curve);
+
+        m.set_button(&d.key, &ButtonMap::Key { button: 5, modifiers: 0x02, usage: 0x04 }).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        println!("as key: buttons={:02x?}", m.state(&d.key).unwrap().buttons);
+        m.set_button(&d.key, &b5).unwrap();
+        m.set_dynamic_sensitivity(&d.key, orig.dynamic_sensitivity.unwrap(), orig.curve.unwrap_or(0), 1.5).unwrap();
+        if orig.curve == Some(0) {
+            // switching dynamic off leaves the curve id as it was; put the original back explicitly
+            let (dev, tx, _) = m.open(&d.key).unwrap();
+            protocol::transfer(&dev, &protocol::set_sensitivity_curve(tx, 0)).unwrap();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let back = m.state(&d.key).unwrap();
+        println!("restored: buttons={:02x?} dyn={:?} curve={:?}", back.buttons, back.dynamic_sensitivity, back.curve);
     }
 }

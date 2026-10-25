@@ -18,6 +18,31 @@ const PALETTE = ["#2ff0b0", "#22a6ff", "#7b6cff", "#ff3bd4", "#ff3355", "#ff8a3b
 // mouse functions a button can take, as the device encodes them
 const MOUSE_FUNCS = [1, 2, 3, 4, 5, 9, 10];
 const REMAPPABLE = [3, 4, 5];
+
+// KeyboardEvent.code -> USB HID usage id
+const HID = (() => {
+  const m = {};
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").forEach((c, i) => (m["Key" + c] = 0x04 + i));
+  "1234567890".split("").forEach((c, i) => (m["Digit" + c] = 0x1e + i));
+  for (let i = 1; i <= 12; i++) m["F" + i] = 0x39 + i;
+  for (let i = 13; i <= 24; i++) m["F" + i] = 0x68 + (i - 13);
+  Object.assign(m, {
+    Enter: 0x28, Escape: 0x29, Backspace: 0x2a, Tab: 0x2b, Space: 0x2c, Minus: 0x2d, Equal: 0x2e,
+    BracketLeft: 0x2f, BracketRight: 0x30, Backslash: 0x31, Semicolon: 0x33, Quote: 0x34, Backquote: 0x35,
+    Comma: 0x36, Period: 0x37, Slash: 0x38, CapsLock: 0x39, PrintScreen: 0x46, ScrollLock: 0x47, Pause: 0x48,
+    Insert: 0x49, Home: 0x4a, PageUp: 0x4b, Delete: 0x4c, End: 0x4d, PageDown: 0x4e,
+    ArrowRight: 0x4f, ArrowLeft: 0x50, ArrowDown: 0x51, ArrowUp: 0x52,
+    NumpadDivide: 0x54, NumpadMultiply: 0x55, NumpadSubtract: 0x56, NumpadAdd: 0x57, NumpadEnter: 0x58,
+    Numpad1: 0x59, Numpad2: 0x5a, Numpad3: 0x5b, Numpad4: 0x5c, Numpad5: 0x5d, Numpad6: 0x5e,
+    Numpad7: 0x5f, Numpad8: 0x60, Numpad9: 0x61, Numpad0: 0x62, NumpadDecimal: 0x63,
+  });
+  return m;
+})();
+const HID_NAME = Object.fromEntries(Object.entries(HID).map(([code, id]) => [id, code.replace(/^Key|^Digit/, "")]));
+const keyLabel = (k) =>
+  [k.modifiers & 1 && "Ctrl", k.modifiers & 2 && "Shift", k.modifiers & 4 && "Alt", k.modifiers & 8 && "Win", HID_NAME[k.usage] || "0x" + k.usage.toString(16)]
+    .filter(Boolean)
+    .join(" + ");
 const STAGE_COLORS = ["#ff4d4d", "#3ee07a", "#4d8bff", "#2fd8e6", "#ffd23b"];
 const FX_COLOR = { static: 1, breathing: 2, reactive: 1, starlight: 1 };
 const FX_SPEED = new Set(["wave", "reactive", "starlight"]);
@@ -175,10 +200,18 @@ function normalize(s = {}) {
       curve: num(s.calib?.curve, 0, 0, 3),
       customMax: Number.isFinite(+s.calib?.customMax) ? clamp(+s.calib.customMax, 1, 2.5) : 1.5,
     },
-    buttons: Object.fromEntries(REMAPPABLE.map((b) => [b, MOUSE_FUNCS.includes(+s.buttons?.[b]) ? +s.buttons[b] : b])),
+    buttons: Object.fromEntries(REMAPPABLE.map((b) => [b, normButton(b, s.buttons?.[b])])),
     dongle: { led: num(s.dongle?.led, 2, 1, 3) },
     power: { idle: num(s.power?.idle, 300, 60, 900), lowBattery: num(s.power?.lowBattery, 15, 5, 100) },
   };
+}
+
+function normButton(b, v) {
+  // older presets stored a bare mouse function number
+  if (typeof v === "number" || typeof v === "string") v = { kind: "mouse", function: +v };
+  if (v?.kind === "key" && +v.usage >= 0x04 && +v.usage <= 0xe7) return { kind: "key", modifiers: (+v.modifiers || 0) & 15, usage: +v.usage };
+  if (v?.kind === "mouse" && MOUSE_FUNCS.includes(+v.function)) return { kind: "mouse", function: +v.function };
+  return { kind: "mouse", function: b };
 }
 
 function settingsFromHw(dev) {
@@ -197,7 +230,7 @@ function settingsFromHw(dev) {
   if (hw.dynamic_sensitivity != null) s.calib.dynamic = hw.dynamic_sensitivity;
   if (hw.dongle_led != null) s.dongle.led = hw.dongle_led;
   if (hw.curve != null) s.calib.curve = hw.curve;
-  for (const [b, f] of hw.buttons || []) if (REMAPPABLE.includes(b) && MOUSE_FUNCS.includes(f)) s.buttons[b] = f;
+  for (const m of hw.buttons || []) if (REMAPPABLE.includes(m.button)) s.buttons[m.button] = normButton(m.button, m);
   if (hw.low_battery) s.power.lowBattery = clamp(hw.low_battery, 5, 100);
   return s;
 }
@@ -320,7 +353,7 @@ function applyCalib(dev, s) {
 function applyButtons(dev, s) {
   if (!dev.caps.remap) return;
   debounce("buttons" + dev.key, async () => {
-    for (const b of REMAPPABLE) await hw(dev, "set_button", { button: b, function: s.buttons[b] });
+    for (const b of REMAPPABLE) await hw(dev, "set_button", { map: { ...s.buttons[b], button: b } });
   }, 200);
 }
 
@@ -653,10 +686,21 @@ function buttonsTab(dev, s) {
   const names = { 3: "btnMiddle", 4: "btnBack", 5: "btnForward" };
   return `<div class="grid">
     <div class="card span-8">${head(1, t("remap"), esc(t("remapLayer")))}<div class="card-body">
-      ${REMAPPABLE.map((b) => `<div class="setting" style="padding-left:0;padding-right:0">
-        <div><div class="t">${esc(t(names[b]))}</div>${s.buttons[b] === b ? `<div class="d">${esc(t("btnDefault"))}</div>` : ""}</div>
-        <select class="select" data-act="button" data-b="${b}">${MOUSE_FUNCS.map((f) => `<option value="${f}" ${s.buttons[b] === f ? "selected" : ""}>${esc(t("fn" + f))}</option>`).join("")}</select>
-      </div>`).join("")}
+      ${REMAPPABLE.map((b) => {
+        const m = s.buttons[b];
+        const isDefault = m.kind === "mouse" && m.function === b;
+        const listening = state.listen === b;
+        return `<div class="setting" style="padding-left:0;padding-right:0">
+        <div><div class="t">${esc(t(names[b]))}</div>${isDefault ? `<div class="d">${esc(t("btnDefault"))}</div>` : ""}</div>
+        <div class="row" style="gap:8px;margin:0">
+          <select class="select" data-act="button" data-b="${b}">
+            ${MOUSE_FUNCS.map((f) => `<option value="${f}" ${m.kind === "mouse" && m.function === f ? "selected" : ""}>${esc(t("fn" + f))}</option>`).join("")}
+            <option value="key" ${m.kind === "key" ? "selected" : ""}>${esc(m.kind === "key" ? t("fnKey") + ": " + keyLabel(m) : t("fnKey") + "…")}</option>
+          </select>
+          ${m.kind === "key" || listening ? `<button class="btn ${listening ? "primary" : ""}" data-act="listen" data-b="${b}">${esc(listening ? t("pressKey") : t("changeKey"))}</button>` : ""}
+        </div>
+      </div>`;
+      }).join("")}
     </div></div>
     <div class="card span-4">${head(2, t("remapNote"))}<div class="card-body">
       <p class="hint" style="margin:0">${esc(t("remapNoteText"))}</p>
@@ -915,6 +959,9 @@ async function onClick(e) {
       s.calib.curve = +el.dataset.v;
       touch(p); applyCalib(dev, s);
       return rerender();
+    case "listen":
+      state.listen = state.listen === +el.dataset.b ? null : +el.dataset.b;
+      return rerender();
     case "liftoff":
       s.calib.liftoff = +el.dataset.v;
       touch(p); applyCalib(dev, s);
@@ -1089,8 +1136,14 @@ function onChange(e) {
     rerender();
   } else if (act === "button" && dev) {
     const p = presetFor(dev);
-    p.settings.buttons[+el.dataset.b] = +el.value;
-    touch(p); applyButtons(dev, p.settings);
+    const b = +el.dataset.b;
+    if (el.value === "key") {
+      state.listen = b;
+    } else {
+      state.listen = null;
+      p.settings.buttons[b] = { kind: "mouse", function: +el.value };
+      touch(p); applyButtons(dev, p.settings);
+    }
     rerender();
   } else if (act === "autoapply") {
     st.autoApply = el.checked;
@@ -1114,6 +1167,21 @@ async function boot() {
   applyTheme();
 
   document.addEventListener("click", onClick);
+  document.addEventListener("keydown", (e) => {
+    if (state.listen == null) return;
+    const dev = currentDevice();
+    if (!dev || ["ControlLeft", "ControlRight", "ShiftLeft", "ShiftRight", "AltLeft", "AltRight", "MetaLeft", "MetaRight"].includes(e.code)) return;
+    e.preventDefault();
+    if (e.code === "Escape") { state.listen = null; return rerender(); }
+    const usage = HID[e.code];
+    if (!usage) return toast(t("keyUnsupported"), "error");
+    const p = presetFor(dev);
+    const modifiers = (e.ctrlKey ? 1 : 0) | (e.shiftKey ? 2 : 0) | (e.altKey ? 4 : 0) | (e.metaKey ? 8 : 0);
+    p.settings.buttons[state.listen] = { kind: "key", modifiers, usage };
+    state.listen = null;
+    touch(p); applyButtons(dev, p.settings);
+    rerender();
+  });
   document.addEventListener("input", onInput);
   document.addEventListener("change", onChange);
   document.addEventListener("contextmenu", (e) => { if (!e.target.closest("input, textarea")) e.preventDefault(); });

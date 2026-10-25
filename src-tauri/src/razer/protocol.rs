@@ -307,6 +307,12 @@ pub fn set_button_mouse(tx: u8, button: u8, layer: u8, function: u8) -> Report {
     Report::new(tx, 0x02, 0x0C, 0x0A, &[0x01, button, layer.min(1), 0x01, 0x01, function])
 }
 
+/// Kind 2 = keyboard key: HID modifier bitmask (1 ctrl, 2 shift, 4 alt, 8 win) and HID usage id.
+/// Captured: button 5 -> "A" is [01, 05, 00, 02, 02, 00, 04].
+pub fn set_button_key(tx: u8, button: u8, layer: u8, modifiers: u8, usage: u8) -> Report {
+    Report::new(tx, 0x02, 0x0C, 0x0A, &[0x01, button, layer.min(1), 0x02, 0x02, modifiers, usage])
+}
+
 pub fn get_button(tx: u8, button: u8, layer: u8) -> Report {
     Report::new(tx, 0x02, 0x8C, 0x0A, &[0x01, button, layer.min(1)])
 }
@@ -454,6 +460,7 @@ mod tests {
         assert_eq!(&set_sensitivity_curve(0x1F, 0).0[5..10], &[0x02, 0x0B, 0x11, 0x01, 0x00]);
         assert_eq!(&set_button_mouse(0x1F, 5, 0, 1).0[5..14], &[0x0A, 0x02, 0x0C, 0x01, 0x05, 0x00, 0x01, 0x01, 0x01]);
         assert_eq!(&set_button_mouse(0x1F, 5, 1, 5).0[8..14], &[0x01, 0x05, 0x01, 0x01, 0x01, 0x05]);
+        assert_eq!(&set_button_key(0x1F, 5, 0, 0, 0x04).0[5..18], &[0x0A, 0x02, 0x0C, 0x01, 0x05, 0x00, 0x02, 0x02, 0x00, 0x04, 0, 0, 0]);
     }
 
     #[test]
