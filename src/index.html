@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Open Synapse</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="titlebar" data-tauri-drag-region>
+    <div class="brand" data-tauri-drag-region>
+      <img src="logo.svg" alt="" class="brand-mark">
+      <span class="brand-name">Open Synapse</span>
+    </div>
+    <div class="title-meta" data-tauri-drag-region><span>v0.1.0</span><span id="title-status"></span></div>
+    <div class="window-controls">
+      <button class="wc" id="wc-min" aria-label="Minimize"><svg viewBox="0 0 12 12"><path d="M2 6h8"/></svg></button>
+      <button class="wc" id="wc-max" aria-label="Maximize"><svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" rx="1"/></svg></button>
+      <button class="wc wc-close" id="wc-close" aria-label="Close"><svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6"/></svg></button>
+    </div>
+  </header>
+
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="side-head">
+        <span class="eyebrow" data-i18n="devices"></span>
+        <span class="count" id="device-count">0</span>
+      </div>
+      <nav class="device-list" id="device-list"></nav>
+      <div class="side-foot">
+        <button class="nav-btn" data-view="library"><svg viewBox="0 0 24 24"><path d="M4 5h6v14H4zM14 5h6v6h-6zM14 15h6v4h-6z"/></svg><span data-i18n="library"></span></button>
+        <button class="nav-btn" data-view="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg><span data-i18n="settings"></span></button>
+      </div>
+    </aside>
+
+    <main class="main" id="main"></main>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+  <div class="modal-root" id="modal-root"></div>
+</body>
+</html>
