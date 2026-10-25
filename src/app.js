@@ -435,9 +435,9 @@ const currentDevice = () => state.devices.find((d) => d.key === state.view.key);
 
 // ------------------------------------------------------------------ rendering
 
-function render() {
+function render(resetScroll = false) {
   renderSidebar();
-  renderMain();
+  renderMain(resetScroll);
 }
 
 function renderSidebar() {
@@ -463,9 +463,9 @@ function renderSidebar() {
   document.querySelectorAll(".nav-btn").forEach((b) => b.classList.toggle("active", state.view.type === b.dataset.view));
 }
 
-function renderMain() {
+function renderMain(resetScroll = false) {
   const main = $("#main");
-  const top = main.scrollTop;
+  const top = resetScroll ? 0 : main.scrollTop;
   if (state.view.type === "library") main.innerHTML = libraryView();
   else if (state.view.type === "settings") main.innerHTML = settingsView();
   else {
@@ -828,7 +828,7 @@ function settingsView() {
         <div class="setting"><div><div class="t">${esc(t("demoMode"))}</div><div class="d">${esc(t("demoModeHint"))}</div></div>
           <label class="switch"><input type="checkbox" data-act="demo" ${st.demo ? "checked" : ""}><span></span></label></div>
       </div>
-      <div class="card">${head(3, t("about"), "v0.1.0 · MIT")}
+      <div class="card">${head(3, t("about"), "v0.1.1 · MIT")}
         <div class="about"><img src="logo.svg" alt=""><div><b>Open Synapse</b><p class="muted" style="margin:6px 0 0">${esc(t("aboutText"))}</p>
         <p class="hint" style="margin:6px 0 0">${esc(t("dataFolder"))}</p></div></div>
       </div>
@@ -918,12 +918,14 @@ async function onClick(e) {
   if (item) {
     state.view = { type: "device", key: item.dataset.key };
     state.zone = null;
-    return render();
+    state.listen = null;
+    return render(true);
   }
   const nav = e.target.closest(".nav-btn");
   if (nav) {
     state.view = { type: nav.dataset.view };
-    return render();
+    state.listen = null;
+    return render(true);
   }
   const tab = e.target.closest("[data-tab]");
   if (tab) {

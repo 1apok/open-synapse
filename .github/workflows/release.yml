@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag (for example v0.1.1)
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -20,6 +25,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -30,12 +37,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libudev-dev libusb-1.0-0-dev
       - run: npm ci
-      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Browser regression tests
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:ui
+      - run: cargo test --release --locked --manifest-path src-tauri/Cargo.toml
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Open Synapse ${{ github.ref_name }}
+          tagName: ${{ inputs.tag || github.ref_name }}
+          releaseName: Open Synapse ${{ inputs.tag || github.ref_name }}
           releaseBody: Download the installer for your system below.
-          releaseDraft: false
+          releaseDraft: true

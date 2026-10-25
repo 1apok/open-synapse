@@ -1,6 +1,6 @@
 {
   "name": "open-synapse",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Open-source, account-free configurator for Razer peripherals",
   "license": "MIT",
@@ -8,10 +8,12 @@
     "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
+    "test:ui": "node scripts/test-ui.mjs",
     "icons": "node scripts/render-icon.mjs && tauri icon assets/icon-1024.png"
   },
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2",
-    "@tauri-apps/cli": "^2"
+    "@tauri-apps/cli": "^2",
+    "playwright": "^1.64.1"
   }
 }
