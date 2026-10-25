@@ -328,7 +328,8 @@ async function poll() {
   let list = [];
   if (tauri) {
     try {
-      list = await invoke("list_devices");
+      // a sleeping mouse behind its receiver cannot be read or written
+      list = (await invoke("list_devices")).map((d) => ({ ...d, online: d.online && !d.asleep }));
     } catch (e) {
       console.warn(e);
     }
@@ -384,7 +385,7 @@ function renderSidebar() {
       .map((d) => {
         const b = state.hw[d.key]?.battery;
         const active = state.view.type === "device" && state.view.key === d.key;
-        const sub = d.demo ? t("demo") : d.online ? (d.wireless ? t("wireless") : t("wired")) : t("asleep");
+        const sub = d.demo ? t("demo") : d.asleep ? t("sleeping") : d.online ? (d.wireless ? t("wireless") : t("wired")) : t("asleep");
         return `<button class="dev-item ${active ? "active" : ""}" data-key="${esc(d.key)}">
           <span class="dev-icon">${state.lib.photos[d.key] ? `<img src="${state.lib.photos[d.key]}" alt="">` : icons[d.kind] || icons.other}</span>
           <span style="min-width:0"><div class="dev-name">${esc(d.name)}</div>
@@ -474,7 +475,7 @@ function deviceView(dev) {
     dev.demo ? `<span class="chip solid">${esc(t("demo"))}</span>` : "",
     `<span class="chip">${dev.wireless ? I.wifi : I.cable}${esc(conn)}</span>`,
     dev.firmware ? `<span class="chip">${I.chip}FW ${esc(dev.firmware)}</span>` : "",
-    !dev.online ? `<span class="chip warn">${esc(t("asleep"))}</span>` : "",
+    !dev.online ? `<span class="chip warn">${esc(t(dev.asleep ? "sleepingHint" : "asleep"))}</span>` : "",
     !dev.verified ? `<span class="chip warn" title="${esc(t("unverifiedHint"))}">${esc(t("unverified"))}</span>` : "",
   ].join("");
 

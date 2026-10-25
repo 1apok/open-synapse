@@ -191,6 +191,12 @@ pub fn get_hyper_polling(tx: u8) -> Report {
     Report::new(tx, 0x00, 0xC0, 0x02, &[0x00])
 }
 
+/// Receiver link status. args[1] is 1 while the paired mouse is awake and in range,
+/// 0 while it sleeps (seen on the Viper V3 Pro HyperSpeed dongle; then the dongle answers alone).
+pub fn get_link(tx: u8) -> Report {
+    Report::new(tx, 0x00, 0xBF, 0x50, &[])
+}
+
 pub fn get_battery(tx: u8) -> Report {
     Report::new(tx, 0x07, 0x80, 0x02, &[])
 }

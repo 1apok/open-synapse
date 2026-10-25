@@ -15,6 +15,7 @@ struct Link {
     tx: u8,
     firmware: Option<String>,
     serial: Option<String>,
+    asleep_at_probe: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -48,6 +49,7 @@ pub struct DeviceView {
     pub receiver: bool,
     pub verified: bool,
     pub online: bool,
+    pub asleep: bool,
     pub firmware: Option<String>,
     pub serial: Option<String>,
     pub caps: Caps,
@@ -190,6 +192,12 @@ impl Manager {
         }
 
         self.links.retain(|pid, _| found.iter().any(|(p, _, _)| p == pid));
+        let sleeping: Vec<u16> = self.links.iter().filter(|(_, l)| l.asleep_at_probe).map(|(p, _)| *p).collect();
+        for pid in sleeping {
+            if !self.links.get(&pid).is_some_and(|l| self.is_asleep(l)) {
+                self.links.remove(&pid);
+            }
+        }
 
         let mut out = Vec::new();
         for (pid, product, paths) in found {
@@ -199,6 +207,7 @@ impl Manager {
                     self.links.insert(pid, link);
                 }
             }
+            let asleep = model.flags & RECEIVER != 0 && self.links.get(&pid).is_some_and(|l| self.is_asleep(l));
             let link = self.links.get(&pid);
             out.push(DeviceView {
                 key: key_of(pid),
@@ -209,6 +218,7 @@ impl Manager {
                 receiver: model.flags & RECEIVER != 0,
                 verified: model.flags & UNVERIFIED == 0,
                 online: link.is_some(),
+                asleep,
                 firmware: link.and_then(|l| l.firmware.clone()),
                 serial: link.and_then(|l| l.serial.clone()),
                 caps: caps_of(&model),
@@ -216,6 +226,16 @@ impl Manager {
         }
         out.sort_by_key(|d| (d.kind as u8, d.name.clone()));
         Ok(out)
+    }
+
+/// A receiver answers by itself while its mouse sleeps; ask it whether the mouse is there.
+    fn is_asleep(&self, link: &Link) -> bool {
+        let Some(api) = self.api.as_ref() else { return false };
+        let Ok(dev) = api.open_path(&link.path) else { return false };
+        match protocol::transfer(&dev, &protocol::get_link(link.tx)) {
+            Ok(r) => r.args()[0] == 0x02 && r.args()[1] == 0x00,
+            Err(_) => false,
+        }
     }
 
     /// Tries every interface / transaction id until the device answers.
@@ -234,12 +254,14 @@ impl Manager {
                     let serial = protocol::transfer(&dev, &protocol::get_serial(tx))
                         .ok()
                         .and_then(|r| serial_of(&r));
-                    return Some(Link {
-                        path: path.clone(),
-                        tx,
-                        firmware: Some(firmware_of(&fw)),
-                        serial,
-                    });
+                    let mut link = Link { path: path.clone(), tx, firmware: Some(firmware_of(&fw)), serial, asleep_at_probe: false };
+                    if model.flags & RECEIVER != 0 {
+                        link.asleep_at_probe = match protocol::transfer(&dev, &protocol::get_link(tx)) {
+                            Ok(r) => r.args()[0] == 0x02 && r.args()[1] == 0x00,
+                            Err(_) => false,
+                        };
+                    }
+                    return Some(link);
                 }
             }
         }
@@ -404,7 +426,7 @@ mod hardware {
             println!("path {p}");
         }
         for d in &devices {
-            println!("\n{} ({}) online={} fw={:?} serial={:?}", d.name, d.key, d.online, d.firmware, d.serial);
+            println!("\n{} ({}) online={} asleep={} fw={:?} serial={:?}", d.name, d.key, d.online, d.asleep, d.firmware, d.serial);
             if d.online {
                 println!("  state: {:?}", m.state(&d.key));
             }
